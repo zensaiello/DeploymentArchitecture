@@ -18,7 +18,7 @@ except Exception, e:
     print "Connection to zenoss dmd failed: %s\n" % e
     sys.exit(1)
 #
-
+from Products.ZenUtils.Utils import convToUnits
 
 #  Need to accept a couple of arguments
 #  File to write output to - example "/tmp/ZenossArchReport.txt"
@@ -74,22 +74,67 @@ def _discoverLocalhostNames():
 _LOCALHOSTNAMES = _LOOPBACKNAMES.union(_discoverLocalhostNames())
 
 def processCpuInfo(cpuinfo):
-    cpuinfo.pop(-1)
-    cpuinfo.pop(-1)
-    cpuinfo.pop(-1)
-    cpuinfo.pop(-1)
-    cpuinfo.pop(-1)
-    cpuinfo.pop(8)
-    cpuinfo.pop(8)
-    cpuinfo.pop(8)
-    cpuinfo.pop(8)
-    cpuinfo.pop(8)
-    return cpuinfo
+    cpucheck = ['processor', 'model name', 'cpu MHz', 'cache size']
+    cpulist = {}
+    cpusummary = {}
+    cpusummary['sockets'] = 0
+    cpusummary['cores'] = 0
+    cpusummary['hyperthreadcores'] = 0
+    cpusummary['socketlist'] = {}
+    for cpuline in cpuinfo:
+        if cpuline.count(':'):
+            fieldname, value = cpuline.split(':')
+            fieldname = fieldname.strip()
+            fieldname = fieldname.strip('\t')
+            if fieldname == 'cpu cores':
+                cpusummary['cores'] = int(value.strip())
+            if fieldname == 'siblings':
+                cpusummary['hyperthreadcores'] = int(value.strip())
+            if fieldname == 'physical id':
+                socket = int(value.strip())
+                if not cpusummary['socketlist'].has_key(socket):
+                    cpusummary['socketlist'][socket] = 1
 
+            if cpucheck.count(fieldname):
+                if fieldname=='processor':
+                    proc_num = int(value.strip())
+                    cpulist[proc_num] = {}
+                else:
+                    cpulist[proc_num][fieldname] = value.strip()
+                    if fieldname == 'cpu MHz':
+                        temp_value = float(value.strip()) * 1000 * 1000
+                        final_value = convToUnits(temp_value, 1000, 'Hz')
+                        cpulist[proc_num][fieldname] = final_value
+                    if fieldname == 'cache size':
+                        temp_value = int(value.strip('KB')) * 1024 
+                        final_value = convToUnits(temp_value)
+                        cpulist[proc_num][fieldname] = final_value
+    cpusummary['sockets'] = len(cpusummary['socketlist'])
+    del cpusummary['socketlist']
+    if cpusummary['hyperthreadcores'] == cpusummary['cores']:
+        cpusummary['hyperthreadcores'] = 'No hyperthreading (note:  may not be accurate for virtual guests)'
+    cpusummary['model name'] = cpulist[0]['model name']
+    cpusummary['cpu speed'] = cpulist[0]['cpu MHz']
+    cpusummary['cache size'] = cpulist[0]['cache size']
+    return cpusummary
+	
+	
 def processMemInfo(meminfo):
 #    for i in range(0,22):
 #        meminfo.pop(-1)
-    return meminfo
+    memcheck = ['MemTotal', 'MemFree', 'SwapTotal', 'SwapFree']
+    memlist = {}
+    for memline in meminfo:
+        if memline.count(':'):
+            fieldname, value = memline.split(':')
+            fieldname = fieldname.strip()
+            fieldname = fieldname.strip('\t')
+            if memcheck.count(fieldname):
+                temp_value = int(value.strip('kB')) * 1024
+                final_value = convToUnits(temp_value)
+                memlist[fieldname] = final_value
+    print memlist
+    return memlist
 
 
 # Produce output in reStructured Text
@@ -131,11 +176,15 @@ try:
     master_info['cpuinfo'] = processCpuInfo(cpuinfo)
     out.write("* CPU Information\n")
     for info in master_info['cpuinfo']:
-        out.write("  - " + info + "\n")
+        fieldname = info
+        value = master_info['cpuinfo'][info]
+        out.write("  - " + info + ":  " + str(value) + "\n")
     out.write("\n\n")
     out.write("* Memory Information\n")
     for info in master_info['meminfo']:
-        out.write("  - " + info + "\n")
+        fieldname = info
+        value = master_info['meminfo'][info]
+        out.write("  - " + info + ":  " + str(value) + "\n")
 except Exception as ex:
     if not master_info.has_key('exceptions'):
         master_info['exceptions'] = ''
@@ -158,22 +207,29 @@ for hub in dmd.Monitors.Hub.objectValues("HubConf"):
     hub_conf[hub.id] = {}
     hub_conf[hub.id]['config'] = {}
     hub_conf[hub.id]['collectors'] = {}
-    hub_conf[hub.id]['config']['name'] = hub.hostname
-    out.write(hub_conf[hub.id]['config']['name'] + "\n")
+    hub_conf[hub.id]['config']['hostname'] = hub.hostname
+    hub_conf[hub.id]['config']['name'] = hub.id
+    out.write("\n\n")
+    out.write(hub_conf[hub.id]['config']['name'] + " running on host: " + hub_conf[hub.id]['config']['hostname']+ "\n")
     out.write("=========================================================\n")
-    if not hub_conf[hub.id]['config']['name']	== 'localhost':
+    if not hub_conf[hub.id]['config']['hostname']	== 'localhost':
         try:
             cpuinfo = hub.executeCommand("cat /proc/cpuinfo", "zenoss")[1].splitlines()
             meminfo = hub.executeCommand("cat /proc/meminfo", "zenoss")[1].splitlines()
             hub_conf[hub.id]['config']['cpuinfo'] = processCpuInfo(cpuinfo)
             hub_conf[hub.id]['config']['meminfo'] = processMemInfo(meminfo)
+            out.write("\n")
             out.write("* CPU Information\n")
             for info in hub_conf[hub.id]['config']['cpuinfo']:
-                out.write("  - " + info + "\n")
+                fieldname = info
+                value = hub_conf[hub.id]['config']['cpuinfo'][info]
+                out.write("  - " + info + ":  " + str(value) + "\n")
             out.write("\n\n")
             out.write("* Memory Information\n")
             for info in hub_conf[hub.id]['config']['meminfo']:
-                out.write("  - " + info + "\n")
+                fieldname = info
+                value = hub_conf[hub.id]['config']['meminfo'][info]
+                out.write("  - " + info + ":  " + str(value) + "\n")
             out.write("\n")
         except Exception as ex:
             if not hub_conf[hub.id]['config'].has_key('exceptions'):
@@ -220,10 +276,12 @@ for coll in dmd.Monitors.Performance.objectValues("PerformanceConf"):
     collector_conf[coll.id] = {}
     collector_conf[coll.id]['config'] = {}
     collector_conf[coll.id]['stats'] = {}
-    collector_conf[coll.id]['config']['name'] = coll.hostname
-    out.write(collector_conf[coll.id]['config']['name'] + "\n")
+    collector_conf[coll.id]['config']['name'] = coll.id
+    collector_conf[coll.id]['config']['hostname'] = coll.hostname
+    out.write("\n\n")
+    out.write(collector_conf[coll.id]['config']['name'] + " running on host:  " + collector_conf[coll.id]['config']['hostname'] + "\n")
     out.write("=========================================================\n")
-    if not collector_conf[coll.id]['config']['name']	== 'localhost':
+    if not collector_conf[coll.id]['config']['hostname']	== 'localhost':
         try:
             cpuinfo = coll.executeCommand("cat /proc/cpuinfo", "zenoss")[1].splitlines()
             meminfo = coll.executeCommand("cat /proc/meminfo", "zenoss")[1].splitlines()
@@ -231,11 +289,15 @@ for coll in dmd.Monitors.Performance.objectValues("PerformanceConf"):
             collector_conf[coll.id]['config']['meminfo'] = processMemInfo(meminfo)
             out.write("* CPU Information\n")
             for info in collector_conf[coll.id]['config']['cpuinfo']:
-                out.write("  - " + info + "\n")
+                fieldname = info
+                value = collector_conf[hub.id]['config']['cpuinfo'][info]
+                out.write("  - " + info + ":  " + str(value) + "\n")
             out.write("\n\n")
             out.write("* Memory Information\n")
             for info in collector_conf[coll.id]['config']['meminfo']:
-                out.write("  - " + info + "\n")
+                fieldname = info
+                value = collector_conf[hub.id]['config']['meminfo'][info]
+                out.write("  - " + info + ":  " + str(value) + "\n")
             out.write("\n")
         except Exception as ex:
             if not collector_conf[coll.id]['config'].has_key('exceptions'):
