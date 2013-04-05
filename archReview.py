@@ -133,7 +133,6 @@ def processMemInfo(meminfo):
                 temp_value = int(value.strip('kB')) * 1024
                 final_value = convToUnits(temp_value)
                 memlist[fieldname] = final_value
-    print memlist
     return memlist
 
 
@@ -334,9 +333,6 @@ for coll in dmd.Monitors.Performance.objectValues("PerformanceConf"):
     for dclass in collector_conf[coll.id]['stats']:
         out.write("  - " + dclass + ":  Devices:  "+ str(collector_conf[coll.id]['stats'][dclass]['devices']))
         out.write(":  Datapoints:  " + str(collector_conf[coll.id]['stats'][dclass]['datapoints']) + "\n")
-#	out.write("    + Class:  " + 
-# Temporary print statements - need to format this information better
-# print >>out, collector_conf
 out.write("\n\n")
 out.close()
 
