@@ -62,7 +62,7 @@ def _discoverLocalhostNames():
     names = set()
     import subprocess
     # check the many variants of hostname
-    for args in ("", "-i", "-I", "-a"):
+    for args in ("", "-i", "-I", "-a", "-A", "-s"):
         cmd = "hostname %s" % args
         p = subprocess.Popen(cmd,
              shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -162,6 +162,7 @@ out.write("\n")
 
 master_hostname =  list(_LOCALHOSTNAMES)
 out.write("* Hostnames and IP addresses\n")
+master_hostname.sort()
 for hname in master_hostname:
    out.write("  - " + hname + "\n")
 
@@ -211,7 +212,8 @@ for hub in dmd.Monitors.Hub.objectValues("HubConf"):
     out.write("\n\n")
     out.write(hub_conf[hub.id]['config']['name'] + " running on host: " + hub_conf[hub.id]['config']['hostname']+ "\n")
     out.write("=========================================================\n")
-    if not hub_conf[hub.id]['config']['hostname']	== 'localhost':
+#    if not hub_conf[hub.id]['config']['hostname']	== 'localhost':
+    if not master_hostname.count(hub_conf[hub.id]['config']['hostname']):
         try:
             cpuinfo = hub.executeCommand("cat /proc/cpuinfo", "zenoss")[1].splitlines()
             meminfo = hub.executeCommand("cat /proc/meminfo", "zenoss")[1].splitlines()
@@ -280,7 +282,8 @@ for coll in dmd.Monitors.Performance.objectValues("PerformanceConf"):
     out.write("\n\n")
     out.write(collector_conf[coll.id]['config']['name'] + " running on host:  " + collector_conf[coll.id]['config']['hostname'] + "\n")
     out.write("=========================================================\n")
-    if not collector_conf[coll.id]['config']['hostname']	== 'localhost':
+#    if not collector_conf[coll.id]['config']['hostname']	== 'localhost':
+    if not master_hostname.count(collector_conf[coll.id]['config']['hostname']):
         try:
             cpuinfo = coll.executeCommand("cat /proc/cpuinfo", "zenoss")[1].splitlines()
             meminfo = coll.executeCommand("cat /proc/meminfo", "zenoss")[1].splitlines()
@@ -289,13 +292,13 @@ for coll in dmd.Monitors.Performance.objectValues("PerformanceConf"):
             out.write("* CPU Information\n")
             for info in collector_conf[coll.id]['config']['cpuinfo']:
                 fieldname = info
-                value = collector_conf[hub.id]['config']['cpuinfo'][info]
+                value = collector_conf[coll.id]['config']['cpuinfo'][info]
                 out.write("  - " + info + ":  " + str(value) + "\n")
             out.write("\n\n")
             out.write("* Memory Information\n")
             for info in collector_conf[coll.id]['config']['meminfo']:
                 fieldname = info
-                value = collector_conf[hub.id]['config']['meminfo'][info]
+                value = collector_conf[coll.id]['config']['meminfo'][info]
                 out.write("  - " + info + ":  " + str(value) + "\n")
             out.write("\n")
         except Exception as ex:
@@ -330,9 +333,16 @@ for coll in dmd.Monitors.Performance.objectValues("PerformanceConf"):
         collector_conf[coll.id]['stats'][dc]['datapoints'] += len(datapoints)
     out.write("\n\n")
     out.write("* Datapoints\n")
+    totalDevices = 0
+    totalDatapoints = 0
     for dclass in collector_conf[coll.id]['stats']:
+        totalDevices += collector_conf[coll.id]['stats'][dclass]['devices']
+        totalDatapoints += collector_conf[coll.id]['stats'][dclass]['datapoints']
         out.write("  - " + dclass + ":  Devices:  "+ str(collector_conf[coll.id]['stats'][dclass]['devices']))
         out.write(":  Datapoints:  " + str(collector_conf[coll.id]['stats'][dclass]['datapoints']) + "\n")
+    out.write("  - Total:  Devices:  "+ str(totalDevices))
+    out.write(":  Datapoints:  " + str(totalDatapoints) + "\n")
+    
 out.write("\n\n")
 out.close()
 
