@@ -47,10 +47,15 @@ args = None
 # Open file to write results to
 import gzip
 out = gzip.open(outfile,"w")
+import subprocess
+
+
+#Some constants
+cpuInfoNames = ['virtualization platform', 'model name', 'cpu speed', 'sockets', 'cores', 'hyperthreadcores', 'cache size']
+memInfoNames = ['MemTotal', 'SwapTotal', 'MemFree', 'SwapFree']
 
 # Functions for later use
 def silentCheck(cmd):
-    import subprocess
     p = subprocess.Popen(cmd,
         shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     stdout, stderr = p.communicate()
@@ -60,7 +65,6 @@ _LOOPBACKNAMES = set(('localhost', 'localhost.localdomain', '127.0.0.1'))
 
 def _discoverLocalhostNames():
     names = set()
-    import subprocess
     # check the many variants of hostname
     for args in ("", "-i", "-I", "-a", "-A", "-s"):
         cmd = "hostname %s" % args
@@ -74,7 +78,7 @@ def _discoverLocalhostNames():
 _LOCALHOSTNAMES = _LOOPBACKNAMES.union(_discoverLocalhostNames())
 
 def processCpuInfo(cpuinfo):
-    cpucheck = ['processor', 'model name', 'cpu MHz', 'cache size']
+    cpucheck = ['processor', 'model name', 'cpu MHz', 'cache size', 'virtualization platform']
     cpulist = {}
     cpusummary = {}
     cpusummary['sockets'] = 0
@@ -86,6 +90,8 @@ def processCpuInfo(cpuinfo):
             fieldname, value = cpuline.split(':')
             fieldname = fieldname.strip()
             fieldname = fieldname.strip('\t')
+            if fieldname == 'virtualization platform':
+                cpusummary['virtualization platform'] = value.strip()
             if fieldname == 'cpu cores':
                 cpusummary['cores'] = int(value.strip())
             if fieldname == 'siblings':
@@ -116,6 +122,9 @@ def processCpuInfo(cpuinfo):
     cpusummary['model name'] = cpulist[0]['model name']
     cpusummary['cpu speed'] = cpulist[0]['cpu MHz']
     cpusummary['cache size'] = cpulist[0]['cache size']
+    if not cpusummary['virtualization platform'].lower().count("virtual"):
+        print "deleting virtualization info"
+        del cpusummary['virtualization platform']
     return cpusummary
 	
 	
@@ -161,7 +170,7 @@ out.write("=========================================================\n")
 out.write("\n")
 
 master_hostname =  list(_LOCALHOSTNAMES)
-out.write("* Hostnames and IP addresses\n")
+out.write("* Hostnames and IP addresses for this host\n")
 master_hostname.sort()
 for hname in master_hostname:
    out.write("  - " + hname + "\n")
@@ -173,18 +182,28 @@ try:
     master_info['meminfo'] = processMemInfo(meminfo)
     out.write("\n\n")
     cpuinfo = open('/proc/cpuinfo').read().splitlines()
+    cmd = "lshal | grep -i system.hardware.product | cut -d '=' -f 2 | cut -d ' ' -f 2"
+    p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, stderr = p.communicate()
+    if stdout.lower().find('virtual'):
+        virtual_string = "virtualization platform\t:  " + stdout.replace("'","")
+        cpuinfo.append(virtual_string)
     master_info['cpuinfo'] = processCpuInfo(cpuinfo)
     out.write("* CPU Information\n")
-    for info in master_info['cpuinfo']:
-        fieldname = info
-        value = master_info['cpuinfo'][info]
-        out.write("  - " + info + ":  " + str(value) + "\n")
+#    for info in master_info['cpuinfo']:
+    for info in cpuInfoNames:
+        if master_info['cpuinfo'].has_key(info):
+            fieldname = info
+            value = master_info['cpuinfo'][info]
+            out.write("  - " + info.title() + ":  " + str(value) + "\n")
     out.write("\n\n")
     out.write("* Memory Information\n")
-    for info in master_info['meminfo']:
-        fieldname = info
-        value = master_info['meminfo'][info]
-        out.write("  - " + info + ":  " + str(value) + "\n")
+#    for info in master_info['meminfo']:
+    for info in memInfoNames:
+        if master_info['meminfo'].has_key(info):
+            fieldname = info
+            value = master_info['meminfo'][info]
+            out.write("  - " + info + ":  " + str(value) + "\n")
 except Exception as ex:
     if not master_info.has_key('exceptions'):
         master_info['exceptions'] = ''
@@ -195,6 +214,7 @@ out.write("\n")
 # Subsection - Version information 
 
 # Section - hubs
+out.write("\n")
 out.write("Hub(s)\n")
 out.write("---------------------------------------------------------\n")
 out.write("\n")
@@ -212,19 +232,22 @@ for hub in dmd.Monitors.Hub.objectValues("HubConf"):
     out.write("\n\n")
     out.write(hub_conf[hub.id]['config']['name'] + " running on host: " + hub_conf[hub.id]['config']['hostname']+ "\n")
     out.write("=========================================================\n")
-#    if not hub_conf[hub.id]['config']['hostname']	== 'localhost':
     if not master_hostname.count(hub_conf[hub.id]['config']['hostname']):
         try:
             cpuinfo = hub.executeCommand("cat /proc/cpuinfo", "zenoss")[1].splitlines()
             meminfo = hub.executeCommand("cat /proc/meminfo", "zenoss")[1].splitlines()
+            virtual_string = hub.executeCommand("lshal | grep -i system.hardware.product | cut -d '=' -f 2 | cut -d ' ' -f 2", "zenoss")
+            virtual_string = "virtualization platform\t:  " + stdout.replace("'","")
+            cpuinfo.append(virtual_string)
             hub_conf[hub.id]['config']['cpuinfo'] = processCpuInfo(cpuinfo)
             hub_conf[hub.id]['config']['meminfo'] = processMemInfo(meminfo)
             out.write("\n")
             out.write("* CPU Information\n")
-            for info in hub_conf[hub.id]['config']['cpuinfo']:
-                fieldname = info
-                value = hub_conf[hub.id]['config']['cpuinfo'][info]
-                out.write("  - " + info + ":  " + str(value) + "\n")
+            for info in cpuInfoNames: 
+                if hub_conf[hub.id]['config']['cpuinfo'].has_key(info):
+                    fieldname = info
+                    value = hub_conf[hub.id]['config']['cpuinfo'][info]
+                    out.write("  - " + info.title() + ":  " + str(value) + "\n")
             out.write("\n\n")
             out.write("* Memory Information\n")
             for info in hub_conf[hub.id]['config']['meminfo']:
@@ -265,6 +288,7 @@ for hub in dmd.Monitors.Hub.objectValues("HubConf"):
 out.write("\n")
 
 # Section - collectors
+out.write("\n")
 out.write("Collector(s)\n")
 out.write("---------------------------------------------------------\n")
 out.write("\n")
@@ -282,18 +306,21 @@ for coll in dmd.Monitors.Performance.objectValues("PerformanceConf"):
     out.write("\n\n")
     out.write(collector_conf[coll.id]['config']['name'] + " running on host:  " + collector_conf[coll.id]['config']['hostname'] + "\n")
     out.write("=========================================================\n")
-#    if not collector_conf[coll.id]['config']['hostname']	== 'localhost':
     if not master_hostname.count(collector_conf[coll.id]['config']['hostname']):
         try:
             cpuinfo = coll.executeCommand("cat /proc/cpuinfo", "zenoss")[1].splitlines()
             meminfo = coll.executeCommand("cat /proc/meminfo", "zenoss")[1].splitlines()
+            virtual_string = coll.executeCommand("lshal | grep -i system.hardware.product | cut -d '=' -f 2 | cut -d ' ' -f 2", "zenoss")
+            virtual_string = "virtualization platform\t:  " + stdout.replace("'","")
+            cpuinfo.append(virtual_string)
             collector_conf[coll.id]['config']['cpuinfo'] = processCpuInfo(cpuinfo)
             collector_conf[coll.id]['config']['meminfo'] = processMemInfo(meminfo)
             out.write("* CPU Information\n")
-            for info in collector_conf[coll.id]['config']['cpuinfo']:
-                fieldname = info
-                value = collector_conf[coll.id]['config']['cpuinfo'][info]
-                out.write("  - " + info + ":  " + str(value) + "\n")
+            for info in cpuInfoNames: 
+                if collector_conf[coll.id]['config']['cpuinfo'].has_key(info):
+                    fieldname = info
+                    value = collector_conf[coll.id]['config']['cpuinfo'][info]
+                    out.write("  - " + info.title() + ":  " + str(value) + "\n")
             out.write("\n\n")
             out.write("* Memory Information\n")
             for info in collector_conf[coll.id]['config']['meminfo']:
