@@ -1,32 +1,37 @@
 #!/usr/bin/env python
 
-# This script will capture information about the Zenoss master, hubs and collectors.  It will eventuallly output two 
-#  files (only one implemented for now).  One file will be a report is reStructured Text of the environment and some
-#  information about its health.  The second file will just contain hostnames and information about the boxes to allow 
-#  for producing (in an automated fashion) an architecture diagram.
+# This script captures information about the Zenoss master, hubs and collectors.  It outputs a reStructured Text 
+#  report of the environment and some information about its health.  
 
-# Import Zenoss modules so this can run in the standard Python interpreter
-# Copyright 2012, Zenoss, Inc. and Michael Shannon
 
-print "Trying to connect to DMD"
+# Copyright 2013, Zenoss, Inc. and Michael Shannon
+
+# Imports
+#  Standard Python
+import optparse
+import gzip
+import subprocess
+import os
+import re
+import tarfile
+import json
+#  Zenoss specific
 import Globals, sys
-from Products.ZenUtils.ZenScriptBase import ZenScriptBase
-zenscript = ZenScriptBase(connect=True, noopts=1)
-dmd = None
-try:
-    dmd = zenscript.dmd
-    print "Connected to DMD"
-except Exception, e:
-    print "Connection to zenoss dmd failed: %s\n" % e
-    sys.exit(1)
-#
 from Products.ZenUtils.Utils import convToUnits
+from Products.ZenUtils.ZenScriptBase import ZenScriptBase
+from Products.ZenUtils import GlobalConfig
+from Products.ZenUtils import ZenDB
+
+# Define some constants
+#   Used to get output in desired order
+cpuInfoNames = ['virtualization platform', 'model name', 'cpu speed', 'sockets', 'cores', 'hyperthreadcores', 'cache size']
+memInfoNames = ['MemTotal', 'SwapTotal', 'MemFree', 'SwapFree']
+memcachedNames = ['Maximum Size', 'Current Size', 'Current Connections', 'Evictions']
 
 #  Need to accept a couple of arguments
 #  File to write output to - example "/tmp/ZenossArchReport.txt"
 #  Customer - example "Zenoss, Inc."
 #  Title  - example "Internal IT Infrastructure"
-import optparse
 p = optparse.OptionParser()
 #  File to write output to - example "/tmp/ZenossArchReport"
 p.add_option("-f", "--file", action="store", dest="outfile")
@@ -37,35 +42,28 @@ p.set_defaults(cust_name="Enterprise Customer")
 #  Title  - example "Internal IT Infrastructure"
 p.add_option("-t", "--title", action="store", dest="title_text")
 p.set_defaults(title_text="Architecture Review")
-
 opts, args = p.parse_args()
-
-outfile = opts.outfile + ".gz"
+outfile = opts.outfile
 cust_name = opts.cust_name
 title_text = opts.title_text
-
 args = None
-
-# Open file to write results to
-import gzip
-out = gzip.open(outfile,"w")
-import subprocess
-import os
-import re
+# Open file to write results to - should eventually figure out how to do a .tgz file, so I can add files to the archive
+out = open(outfile + ".txt","w")
+jsonout = open(outfile + ".json", "w")
 
 
-#Some constants
-cpuInfoNames = ['virtualization platform', 'model name', 'cpu speed', 'sockets', 'cores', 'hyperthreadcores', 'cache size']
-memInfoNames = ['MemTotal', 'SwapTotal', 'MemFree', 'SwapFree']
+# Connect to DMD
+print "Trying to connect to DMD"
+zenscript = ZenScriptBase(connect=True, noopts=1)
+dmd = None
+try:
+    dmd = zenscript.dmd
+    print "Connected to DMD"
+except Exception, e:
+    print "Connection to zenoss dmd failed: %s\n" % e
+    sys.exit(1)
 
 # Functions for later use
-def silentCheck(cmd):
-    p = subprocess.Popen(cmd,
-        shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout, stderr = p.communicate()
-    return stdout
-
-_LOOPBACKNAMES = set(('localhost', 'localhost.localdomain', '127.0.0.1'))
 
 def _discoverLocalhostNames():
     names = set()
@@ -79,7 +77,6 @@ def _discoverLocalhostNames():
            names.add(vals)
     return names
 
-_LOCALHOSTNAMES = _LOOPBACKNAMES.union(_discoverLocalhostNames())
 
 def processCpuInfo(cpuinfo):
     cpucheck = ['processor', 'model name', 'cpu MHz', 'cache size', 'virtualization platform']
@@ -209,12 +206,64 @@ def executeDbSql(dbobj, sql):
             subprocess.call('stty sane', shell=True) 
             p.kill() 
 
+def executeLocalCommand(cmd):
+    try:
+        p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, stderr = p.communicate()
+        return stdout.splitlines()
+    except Exception as ex:
+        print ex
+
+def executeRemoteCommand(cmd, remoteHost):
+    try:
+        stdout = remoteHost.executeCommand(cmd, "zenoss")[1].splitlines()
+        return stdout
+    except Exception as ex:
+        print ex
+
+def getDeviceClassStats(collector):
+    # Need to fix - just copied over
+    deviceClassStats = []
+    totalDevices = 0
+    totalDatapoints = 0
+    for dclass in coll_info[coll.id]['stats']:
+        totalDevices += coll_info[coll.id]['stats'][dclass]['devices']
+        totalDatapoints += coll_info[coll.id]['stats'][dclass]['datapoints']
+        #out.write("  - " + dclass + ":  Devices:  "+ str(coll_info[coll.id]['stats'][dclass]['devices']))
+        #out.write(":  Datapoints:  " + str(coll_info[coll.id]['stats'][dclass]['datapoints']) + "\n")
+    #out.write("  - Total:  Devices:  "+ str(totalDevices))
+    #out.write(":  Datapoints:  " + str(totalDatapoints) + "\n")
+
+def componentGen(dmd, comp_type):
+    if comp_type=='HubConf':
+        for component in dmd.Monitors.Hub.objectValues("HubConf"):
+            yield component
+    elif comp_type=='PerformanceConf':
+        for component in dmd.Monitors.Performance.objectValues("PerformanceConf"):
+            yield component
+    else: 
+        raise ValueError("Value must be one of HubConf or PerformanceConf")
+   
+
+def hubGen(dmd):
+    for hub in dmd.Monitors.Hub.objectValues("HubConf"):
+        yield hub
+
+def collectorGen(dmd):
+    for coll in dmd.Monitors.Hub.objectValues("HubConf"):
+        yield hub
+
+#for coll in dmd.Monitors.Performance.objectValues("PerformanceConf"):
+
+
+# Main part of program
+
 # Produce output in reStructured Text
 
 # Get title from arguments, print at top of page
-out.write("===================================================================================\n")
-out.write(title_text + "\n")
-out.write("===================================================================================\n")
+out.write("=============================================================================================================================================================\n")
+out.write(title_text.title() + "\n")
+out.write("=============================================================================================================================================================\n")
 out.write("\n")
 
 # Print Customer Name, current date/time as subtitle
@@ -230,350 +279,454 @@ out.write("\n")
 
 # Subsection - Host information (cpu, memory, etc.)
 out.write("Host information\n")
-out.write("===================================================================================\n")
+out.write("=============================================================================================================================================================\n")
 out.write("\n")
 
+# Get hostnames and IP addresses for master and print
+_LOOPBACKNAMES = set(('localhost', 'localhost.localdomain', '127.0.0.1'))
+_LOCALHOSTNAMES = _LOOPBACKNAMES.union(_discoverLocalhostNames())
 master_hostname =  list(_LOCALHOSTNAMES)
 out.write("* Hostnames and IP addresses for this host\n\n")
 master_hostname.sort()
 for hname in master_hostname:
    out.write("  - " + hname + "\n")
+out.write("\n\n")
 
-# Get cpu and memory information from master - eventually need to parse this out
+# Try to get cpu information from master
 master_info = {}
+out.write("* CPU Information\n\n")
 try:
-    meminfo = open('/proc/meminfo').read().splitlines()
-    master_info['meminfo'] = processMemInfo(meminfo)
-    out.write("\n\n")
-    cpuinfo = open('/proc/cpuinfo').read().splitlines()
-    cmd = "lshal | grep -i system.hardware.product | cut -d '=' -f 2 | cut -d ' ' -f 2"
-    p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout, stderr = p.communicate()
-    if stdout.lower().find('virtual'):
-        virtual_string = "virtualization platform\t:  " + stdout.replace("'","")
+    cpuinfo = executeLocalCommand("cat /proc/cpuinfo")
+    virtual_string = executeLocalCommand("lshal | grep -i system.hardware.product | cut -d '=' -f 2 | cut -d ' ' -f 2")[0]
+    if virtual_string.lower().find('virtual'):
+        virtual_string = "virtualization platform\t:  " + virtual_string.replace("'","")
         cpuinfo.append(virtual_string)
     master_info['cpuinfo'] = processCpuInfo(cpuinfo)
-    out.write("* CPU Information\n\n")
-#    for info in master_info['cpuinfo']:
     for info in cpuInfoNames:
         if master_info['cpuinfo'].has_key(info):
             fieldname = info
             value = master_info['cpuinfo'][info]
             out.write("  - " + info.title() + ":  " + str(value) + "\n")
-    out.write("\n\n")
-    out.write("* Memory Information\n\n")
-#    for info in master_info['meminfo']:
+except Exception as ex:
+    print "Error:  %s\n" % ex.message
+    out.write("    Unable to retrieve information for this section: %s\n" % ex )
+out.write("\n\n")
+
+# Get memory information from master
+out.write("* Memory Information\n\n")
+try:
+    meminfo = executeLocalCommand("cat /proc/meminfo")
+    master_info['meminfo'] = processMemInfo(meminfo)
     for info in memInfoNames:
         if master_info['meminfo'].has_key(info):
             fieldname = info
             value = master_info['meminfo'][info]
             out.write("  - " + info + ":  " + str(value) + "\n")
 except Exception as ex:
-    if not master_info.has_key('exceptions'):
-        master_info['exceptions'] = ''
-    master_info['exceptions'] += str(ex)
-    print ex
+    out.write("    Unable to retrieve information for this section: %s\n" % ex )
+out.write("\n\n")
 
-diskstats = {}
+# Try to get disk information for master
+out.write("* Filesystem Information - /opt/zenoss\n\n")
 try:
-    cmd = "df -hT /opt/zenoss"
-#    cmd = "df -hT /dev/shm"
-
-    p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout, stderr = p.communicate()
-    fstats = stdout.split()
+    master_info['diskstats'] = {}
+    fstemp = executeLocalCommand("df -hT /opt/zenoss")
+    fstatstmp = [fstemp1.split() for fstemp1 in fstemp]
+    fstats = [val for subl in fstatstmp for val in subl]
     del fstats[0:8]
-
     fstemp = fstats[0]
     if "/" in fstemp:
         fsname = fstemp.split("/")[3]
     else:
         fsname = fstemp
-    diskstats['name'] = fsname
-    diskstats['type'] = fstats[1]
-    diskstats['size'] = fstats[2]
-    diskstats['used'] = fstats[3]
-    diskstats['available'] = fstats[4]
-    cmd = "iostat -xN " + fsname 
-
-    p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout, stderr = p.communicate()
-    ftemp = stdout.splitlines()
+    master_info['diskstats']['name'] = fsname
+    master_info['diskstats']['type'] = fstats[1]
+    master_info['diskstats']['size'] = fstats[2]
+    master_info['diskstats']['used'] = fstats[3]
+    master_info['diskstats']['available'] = fstats[4]
+    ftemp = executeLocalCommand("iostat -xN " + fsname)
     del ftemp[0:2]
     ftemp1 = ftemp[0].split()
     num = ftemp1.index("%iowait")
     del ftemp[0]
-    diskstats['iowait'] = ftemp[0].split()[num-1]
+    master_info['diskstats']['iowait'] = ftemp[0].split()[num-1]
     del ftemp[0:2]
     ftemp1 = ftemp[0].split()
     num = ftemp1.index("%util")
     del ftemp[0]
-    diskstats['diskutil'] = ftemp[0].split()[num]
+    master_info['diskstats']['diskutil'] = ftemp[0].split()[num]
     del ftemp[0]
-    out.write("\n\n")
-    out.write("* Filesystem Information - /opt/zenoss\n\n")
     for info in ['name', 'type', 'size', 'used', 'available', 'iowait', 'diskutil']:
-        value = diskstats[info]
+        value = master_info['diskstats'][info]
         out.write("  - " + info.title() + ":  " + str(value) + "\n")
-	
-	
 except Exception as ex:
-    print "Error getting filesystem information:  " + str(ex)
-	
+    out.write("    Unable to retrieve information for this section: %s\n" % ex )
+out.write("\n\n")
+
+# Try to get memcached information
+out.write("* Memcached Information\n\n")
 try:
-    from Products.ZenUtils import GlobalConfig
+    master_info['memcached'] = {}
     gc = GlobalConfig.getGlobalConfiguration()
     if 'zodb-cacheservers' in gc:
+        # In 4.2.X, config property is zodb-cacheservers
         cacheserver = gc.get('zodb-cacheservers')    
     else:
+        # In 4.1.X, config property is cacheservers
         cacheserver = gc.get('cacheservers')
     cmd = "memcached-tool " + cacheserver + " stats"
-    p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-#    stdout = ''
-#    stderr = ''
-    stdout, stderr = p.communicate()
-    memcinfo = processMemcacheInfo(stdout.splitlines())
-    out.write("\n\n")
-    out.write("* Memcached Information\n\n")
+    memcoutput = executeLocalCommand(cmd)
+    memcinfo = processMemcacheInfo(memcoutput)
     for info in ['Maximum Size', 'Current Size', 'Current Connections', 'Evictions']:
         value = memcinfo[info]
         out.write("  - " + info + ":  " + str(value) + "\n")
+        master_info['memcached'][info] = value
 except Exception as ex:
-    print ex
+    out.write("    Unable to retrieve information for this section: %s\n" % ex )
+out.write("\n\n")
 
+# Try to get database information (currently only works on 4.2.X)
+out.write("Database information\n")
+out.write("=============================================================================================================================================================\n")
 out.write("\n")
-
-# DB Information - can't get this on 4.1.1 or below, may need to try another way
 try:
-    from Products.ZenUtils import ZenDB
+    master_info['database'] = {}
+    master_info['database']['zep'] = {}
+    master_info['database']['zodb'] = {}
     zep_db = ZenDB.ZenDB('zep', useAdmin=True)
     db_params = zep_db.dbparams
-    out.write("Database information\n")
-    out.write("===================================================================================\n")
-    out.write("\n")
-
     if master_hostname.count(db_params['host']):
         out.write(" * ZEP DB on Master\n\n")
+        master_info['database']['zep']['host'] = 'master'
     else:
         out.write(" * ZEP DB on " + db_params['host'] + "\n\n")
+        master_info['database']['zep']['host'] = db_params['host']
     zodb_db = ZenDB.ZenDB('zodb', useAdmin=True)
     db_params = zodb_db.dbparams
     if master_hostname.count(db_params['host']):
         out.write(" * ZODB on Master\n\n")
+        master_info['database']['zodb']['host'] = 'master'
     else:
         out.write(" * ZODB on " + db_params['host'] + "\n\n")
+        master_info['database']['zodb']['host'] = db_params['host']
 
-except Exception as ex:
-    print "Can't gather database statistics on this version"
-		
-try:
     dbsizes, stderr = executeDbSql(zep_db, "SELECT table_schema,round(SUM(data_length+index_length)/1024/1024,1) AS size_mb FROM information_schema.tables WHERE table_schema IN ('zodb','zodb_session','zenoss_zep') GROUP BY table_schema;")
-    out.write(" * Database sizes (in MB)\n\n")
+    out.write(" * Database sizes\n\n")
+    master_info['database']['sizes'] = {}
     for dbsize in dbsizes.splitlines():
-        out.write("  - " + dbsize.replace('\t', ":  ") + "\n")
+        dbname, dbsizeval = dbsize.split('\t')
+        dbsizeval = int(float(dbsizeval) * 1024 * 1024)
+        out.write("  - " + dbname + ":  " + convToUnits(dbsizeval) + "\n")
+        master_info['database']['sizes'][dbname] = convToUnits(dbsizeval)
 except Exception as ex:
-#    out.write("Unable to determine database size\n")
-    print ex
+    out.write("    Unable to retrieve information for this section: %s\n" % ex )
+out.write("\n\n")
 
-# Version and Zenpack Information - can't get this on 4.1.1 or below, may need to try another way, callHome data is not accessible on 4.1.1
+#Try to get version information (currently only works on 4.2.x)
+out.write("Version information\n")
+out.write("=============================================================================================================================================================\n")
+out.write("\n")
 try:
-    out.write("\n\n")
-    # Subsection - Version information 
-    import json
+    master_info['versions'] = {}
     callHomeData = json.loads(dmd.callHome.metrics)
-    out.write("Version information\n")
-    out.write("===================================================================================\n")
-    out.write("\n")
     out.write(" * Zenoss Version\n\n")
     out.write("  - " + callHomeData['Zenoss App Data']['Zenoss Version'] + "\n\n")
+    master_info['versions']['zenoss_version'] = callHomeData['Zenoss App Data']['Zenoss Version']
     out.write(" * OS Version\n\n")
     out.write("  - " + callHomeData['Host Data']['OS'] + "\n\n")
+    master_info['versions']['os_version'] = callHomeData['Host Data']['OS']
     out.write(" * RPMs\n\n")
     out.write("  - " + callHomeData['Zenoss Env Data']['RPM - zenoss'] + "\n")
     out.write("  - " + callHomeData['Zenoss Env Data']['RPM - zends'] + "\n")
-    out.write("\n")
+    master_info['versions']['zenoss_rpm'] = callHomeData['Zenoss Env Data']['RPM - zenoss']
+    master_info['versions']['zends_rpm'] = callHomeData['Zenoss Env Data']['RPM - zends']
+except Exception as ex:
+    out.write("    Unable to retrieve information for this section: %s\n" % ex )
+out.write("\n\n")
 
-
-
-    # Subsection - Installed Zenpack information 
-    out.write("Installed Zenpacks\n")
-    out.write("===================================================================================\n")
-    out.write("\n")
-
+# Try to get the list of installed ZenPacks (currently only works on 4.2.x)
+out.write("Installed Zenpacks\n")
+out.write("=============================================================================================================================================================\n")
+out.write("\n")
+try:
+    callHomeData = json.loads(dmd.callHome.metrics)
+    master_info['zenpacks'] = []
     for zenpack in callHomeData['Zenoss App Data']['Zenpack']:
         out.write(" - " + zenpack + "\n")
-
+        master_info['zenpacks'].append(zenpack)
 except Exception as ex:
-    print ex
-	
+    out.write("    Unable to retrieve information for this section: %s\n" % ex )
+out.write("\n\n")
+# Write Master information to json file
+jsonout.write(json.dumps(master_info))
+jsonout.write("\n\n")
+
+
+#####################################
 # Section - hubs
 out.write("\n")
 out.write("Hub(s)\n")
 out.write("-----------------------------------------------------------------------------------\n")
-out.write("\n")
 
 # Get all hubs - iterate through, making each a subsection
-# For each hub, list all daemon processes, and whether they are running
-hub_conf = {}
-# hub_colls = {} 
-for hub in dmd.Monitors.Hub.objectValues("HubConf"):
-    hub_conf[hub.id] = {}
-    hub_conf[hub.id]['config'] = {}
-    hub_conf[hub.id]['collectors'] = {}
-    hub_conf[hub.id]['config']['hostname'] = hub.hostname
-    hub_conf[hub.id]['config']['name'] = hub.id
+
+hub_info = {}
+for comp in componentGen(dmd, "HubConf"):
+    hub_info[comp.id] = {}
+    hub_info[comp.id]['config'] = {}
+    hub_info[comp.id]['collectors'] = {}
+    hub_info[comp.id]['config']['hostname'] = comp.hostname
+    hub_info[comp.id]['config']['name'] = comp.id
     out.write("\n\n")
-    out.write(hub_conf[hub.id]['config']['name'] + " running on host: " + hub_conf[hub.id]['config']['hostname']+ "\n")
-    out.write("===================================================================================\n")
-    if not master_hostname.count(hub_conf[hub.id]['config']['hostname']):
+    out.write(hub_info[comp.id]['config']['name'] + " running on host: " + hub_info[comp.id]['config']['hostname']+ "\n")
+    out.write("=============================================================================================================================================================\n")
+    # If hub is not running on the master, try to get physical and os stats
+    if not master_hostname.count(hub_info[comp.id]['config']['hostname']):
+#    if master_hostname.count(hub_info[comp.id]['config']['hostname']):
+        # Try to get cpu information from hub
+        out.write("* CPU Information\n\n")
         try:
-            cpuinfo = hub.executeCommand("cat /proc/cpuinfo", "zenoss")[1].splitlines()
-            meminfo = hub.executeCommand("cat /proc/meminfo", "zenoss")[1].splitlines()
-            virtual_string = hub.executeCommand("lshal | grep -i system.hardware.product | cut -d '=' -f 2 | cut -d ' ' -f 2", "zenoss")[1]
-            virtual_string = "virtualization platform\t:  " + virtual_string.replace("'","")
-            cpuinfo.append(virtual_string)
-            hub_conf[hub.id]['config']['cpuinfo'] = processCpuInfo(cpuinfo)
-            hub_conf[hub.id]['config']['meminfo'] = processMemInfo(meminfo)
-            out.write("\n")
-            out.write("* CPU Information\n\n")
-            for info in cpuInfoNames: 
-                if hub_conf[hub.id]['config']['cpuinfo'].has_key(info):
+            cpuinfo = executeRemoteCommand("cat /proc/cpuinfo", comp)
+            virtual_string = executeRemoteCommand("lshal | grep -i system.hardware.product | cut -d '=' -f 2 | cut -d ' ' -f 2", comp)[0]
+            if virtual_string.lower().find('virtual'):
+                virtual_string = "virtualization platform\t:  " + virtual_string.replace("'","")
+                cpuinfo.append(virtual_string)
+            hub_info[comp.id]['cpuinfo'] = processCpuInfo(cpuinfo)
+            for info in cpuInfoNames:
+                if hub_info[comp.id]['cpuinfo'].has_key(info):
                     fieldname = info
-                    value = hub_conf[hub.id]['config']['cpuinfo'][info]
+                    value = hub_info[comp.id]['cpuinfo'][info]
                     out.write("  - " + info.title() + ":  " + str(value) + "\n")
-            out.write("\n\n")
-            out.write("* Memory Information\n\n")
-            for info in hub_conf[hub.id]['config']['meminfo']:
-                fieldname = info
-                value = hub_conf[hub.id]['config']['meminfo'][info]
-                out.write("  - " + info + ":  " + str(value) + "\n")
-            out.write("\n")
         except Exception as ex:
-            if not hub_conf[hub.id]['config'].has_key('exceptions'):
-                hub_conf[hub.id]['config']['exceptions'] = ''
-            hub_conf[hub.id]['config']['exceptions'] += str(ex)
-            print ex
-    hub_conf[hub.id]['config']['daemons'] = {}
+            print "Error:  %s\n" % ex.message
+            out.write("    Unable to retrieve information for this section: %s\n" % ex )
+        out.write("\n\n")
+
+        # Get memory information from hub
+        out.write("* Memory Information\n\n")
+        try:
+            meminfo = executeRemoteCommand("cat /proc/meminfo", comp)
+            hub_info[comp.id]['meminfo'] = processMemInfo(meminfo)
+            for info in memInfoNames:
+                if hub_info[comp.id]['meminfo'].has_key(info):
+                    fieldname = info
+                    value = hub_info[comp.id]['meminfo'][info]
+                    out.write("  - " + info + ":  " + str(value) + "\n")
+        except Exception as ex:
+            out.write("    Unable to retrieve information for this section: %s\n" % ex )
+        out.write("\n\n")
+
+        # Try to get disk information for hub
+        out.write("* Filesystem Information - /opt/zenoss\n\n")
+        try:
+            hub_info[comp.id]['diskstats'] = {}
+            fstemp = executeRemoteCommand("df -hT /opt/zenoss", comp)
+            fstatstmp = [fstemp1.split() for fstemp1 in fstemp]
+            fstats = [val for subl in fstatstmp for val in subl]
+            del fstats[0:8]
+            fstemp = fstats[0]
+            if "/" in fstemp:
+                fsname = fstemp.split("/")[3]
+            else:
+                fsname = fstemp
+            hub_info[comp.id]['diskstats']['name'] = fsname
+            hub_info[comp.id]['diskstats']['type'] = fstats[1]
+            hub_info[comp.id]['diskstats']['size'] = fstats[2]
+            hub_info[comp.id]['diskstats']['used'] = fstats[3]
+            hub_info[comp.id]['diskstats']['available'] = fstats[4]
+            ftemp = executeRemoteCommand("iostat -xN " + fsname, comp)
+            del ftemp[0:2]
+            ftemp1 = ftemp[0].split()
+            num = ftemp1.index("%iowait")
+            del ftemp[0]
+            hub_info[comp.id]['diskstats']['iowait'] = ftemp[0].split()[num-1]
+            del ftemp[0:2]
+            ftemp1 = ftemp[0].split()
+            num = ftemp1.index("%util")
+            del ftemp[0]
+            hub_info[comp.id]['diskstats']['diskutil'] = ftemp[0].split()[num]
+            del ftemp[0]
+            for info in ['name', 'type', 'size', 'used', 'available', 'iowait', 'diskutil']:
+                value = hub_info[comp.id]['diskstats'][info]
+                out.write("  - " + info.title() + ":  " + str(value) + "\n")
+        except Exception as ex:
+            out.write("    Unable to retrieve information for this section: %s\n" % ex )
+        out.write("\n\n")
+    # Get configured and running daemons for all hubs
+    hub_info[comp.id]['config']['daemons'] = {}
     out.write("\n")
     out.write("* Daemons\n\n")
-    for d in hub.getZenossDaemonStates():
+    for d in comp.getZenossDaemonStates():
         dname = d['name']
-        if not hub_conf[hub.id]['config']['daemons'].has_key(dname):
+        if not hub_info[comp.id]['config']['daemons'].has_key(dname):
             if d.has_key('pid') and d['pid']:
                 dpid = d['pid']
-                hub_conf[hub.id]['config']['daemons'][dname] = {}
-                hub_conf[hub.id]['config']['daemons'][dname]['running'] = 'Running'
-                hub_conf[hub.id]['config']['daemons'][dname]['pid'] = dpid
+                hub_info[comp.id]['config']['daemons'][dname] = {}
+                hub_info[comp.id]['config']['daemons'][dname]['running'] = 'Running'
+                hub_info[comp.id]['config']['daemons'][dname]['pid'] = dpid
                 out.write("  - " + dname + ":  " +  "Running with PID:  " + dpid + "\n")
             else:
-                hub_conf[hub.id]['config']['daemons'][dname] = {}
-                hub_conf[hub.id]['config']['daemons'][dname]['running'] = 'Not Running'
+                hub_info[comp.id]['config']['daemons'][dname] = {}
+                hub_info[comp.id]['config']['daemons'][dname]['running'] = 'Not Running'
                 out.write("  - " + dname + ":  " +  "Not Running" + "\n")
     out.write("\n\n")
+    # Get configured collectors for all hubs
     out.write("* Collectors (on this hub)\n\n")
-    for coll in hub.collectors():
+    for coll in comp.collectors():
         cname = coll.id
         hname = coll.hostname
-        if not hub_conf[hub.id]['collectors'].has_key(cname):
-            hub_conf[hub.id]['collectors'][cname] = hname
+        if not hub_info[comp.id]['collectors'].has_key(cname):
+            hub_info[comp.id]['collectors'][cname] = hname
             out.write("  - " + cname + " on host:  " + hname + "\n")
 
-out.write("\n")
+# Write Hub information to json file
+jsonout.write(json.dumps(hub_info))
+jsonout.write("\n\n")
+
 
 # Section - collectors
-out.write("\n")
+out.write("\n\n")
 out.write("Collector(s)\n")
 out.write("-----------------------------------------------------------------------------------\n")
-out.write("\n")
 
-#  This code iterates through to get all the information, so I just need to print it
-collector_stats = {}
-collector_conf = {}
+# Get all collectors - iterate through, making each a subsection
 
-for coll in dmd.Monitors.Performance.objectValues("PerformanceConf"):
-    collector_conf[coll.id] = {}
-    collector_conf[coll.id]['config'] = {}
-    collector_conf[coll.id]['stats'] = {}
-    collector_conf[coll.id]['config']['name'] = coll.id
-    collector_conf[coll.id]['config']['hostname'] = coll.hostname
+coll_info = {}
+for comp in componentGen(dmd, "PerformanceConf"):
+    coll_info[comp.id] = {}
+    coll_info[comp.id]['config'] = {}
+    coll_info[comp.id]['collectors'] = {}
+    coll_info[comp.id]['config']['hostname'] = comp.hostname
+    coll_info[comp.id]['config']['name'] = comp.id
     out.write("\n\n")
-    out.write(collector_conf[coll.id]['config']['name'] + " running on host:  " + collector_conf[coll.id]['config']['hostname'] + "\n")
-    out.write("===================================================================================\n")
-    if not master_hostname.count(collector_conf[coll.id]['config']['hostname']):
-        try:
-            cpuinfo = coll.executeCommand("cat /proc/cpuinfo", "zenoss")[1].splitlines()
-            meminfo = coll.executeCommand("cat /proc/meminfo", "zenoss")[1].splitlines()
-            virtual_string = coll.executeCommand("lshal | grep -i system.hardware.product | cut -d '=' -f 2 | cut -d ' ' -f 2", "zenoss")[1]
-            virtual_string = "virtualization platform\t:  " + virtual_string.replace("'","")
-            cpuinfo.append(virtual_string)
-            collector_conf[coll.id]['config']['cpuinfo'] = processCpuInfo(cpuinfo)
-            collector_conf[coll.id]['config']['meminfo'] = processMemInfo(meminfo)
-            out.write("* CPU Information\n\n")
-            for info in cpuInfoNames: 
-                if collector_conf[coll.id]['config']['cpuinfo'].has_key(info):
-                    fieldname = info
-                    value = collector_conf[coll.id]['config']['cpuinfo'][info]
-                    out.write("  - " + info.title() + ":  " + str(value) + "\n")
-            out.write("\n\n")
-            out.write("* Memory Information\n\n")
-            for info in collector_conf[coll.id]['config']['meminfo']:
-                fieldname = info
-                value = collector_conf[coll.id]['config']['meminfo'][info]
-                out.write("  - " + info + ":  " + str(value) + "\n")
-            out.write("\n")
-        except Exception as ex:
-            if not collector_conf[coll.id]['config'].has_key('exceptions'):
-                collector_conf[coll.id]['config']['exceptions'] = ''
-            collector_conf[coll.id]['config']['exceptions'] += str(ex)
-            print ex
-    collector_conf[coll.id]['daemons'] = {}
+    out.write(coll_info[comp.id]['config']['name'] + " running on host: " + coll_info[comp.id]['config']['hostname']+ "\n")
+    out.write("=============================================================================================================================================================\n")
     out.write("\n")
+    # If collector is not running on the master, try to get physical and os stats
+    if not master_hostname.count(coll_info[comp.id]['config']['hostname']):
+#    if master_hostname.count(coll_info[comp.id]['config']['hostname']):
+        # Try to get cpu information from collector
+        out.write("* CPU Information\n\n")
+        try:
+            cpuinfo = executeRemoteCommand("cat /proc/cpuinfo", comp)
+            virtual_string = executeRemoteCommand("lshal | grep -i system.hardware.product | cut -d '=' -f 2 | cut -d ' ' -f 2", comp)[0]
+            if virtual_string.lower().find('virtual'):
+                virtual_string = "virtualization platform\t:  " + virtual_string.replace("'","")
+                cpuinfo.append(virtual_string)
+            coll_info[comp.id]['cpuinfo'] = processCpuInfo(cpuinfo)
+            for info in cpuInfoNames:
+                if coll_info[comp.id]['cpuinfo'].has_key(info):
+                    fieldname = info
+                    value = coll_info[comp.id]['cpuinfo'][info]
+                    out.write("  - " + info.title() + ":  " + str(value) + "\n")
+        except Exception as ex:
+            print "Error:  %s\n" % ex.message
+            out.write("    Unable to retrieve information for this section: %s\n" % ex )
+        out.write("\n\n")
+
+        # Get memory information from collector
+        out.write("* Memory Information\n\n")
+        try:
+            meminfo = executeRemoteCommand("cat /proc/meminfo", comp)
+            coll_info[comp.id]['meminfo'] = processMemInfo(meminfo)
+            for info in memInfoNames:
+                if coll_info[comp.id]['meminfo'].has_key(info):
+                    fieldname = info
+                    value = coll_info[comp.id]['meminfo'][info]
+                    out.write("  - " + info + ":  " + str(value) + "\n")
+        except Exception as ex:
+            out.write("    Unable to retrieve information for this section: %s\n" % ex )
+        out.write("\n\n")
+
+        # Try to get disk information for collector
+        out.write("* Filesystem Information - /opt/zenoss\n\n")
+        try:
+            coll_info[comp.id]['diskstats'] = {}
+            fstemp = executeRemoteCommand("df -hT /opt/zenoss", comp)
+            fstatstmp = [fstemp1.split() for fstemp1 in fstemp]
+            fstats = [val for subl in fstatstmp for val in subl]
+            del fstats[0:8]
+            fstemp = fstats[0]
+            if "/" in fstemp:
+                fsname = fstemp.split("/")[3]
+            else:
+                fsname = fstemp
+            coll_info[comp.id]['diskstats']['name'] = fsname
+            coll_info[comp.id]['diskstats']['type'] = fstats[1]
+            coll_info[comp.id]['diskstats']['size'] = fstats[2]
+            coll_info[comp.id]['diskstats']['used'] = fstats[3]
+            coll_info[comp.id]['diskstats']['available'] = fstats[4]
+            ftemp = executeRemoteCommand("iostat -xN " + fsname, comp)
+            del ftemp[0:2]
+            ftemp1 = ftemp[0].split()
+            num = ftemp1.index("%iowait")
+            del ftemp[0]
+            coll_info[comp.id]['diskstats']['iowait'] = ftemp[0].split()[num-1]
+            del ftemp[0:2]
+            ftemp1 = ftemp[0].split()
+            num = ftemp1.index("%util")
+            del ftemp[0]
+            coll_info[comp.id]['diskstats']['diskutil'] = ftemp[0].split()[num]
+            del ftemp[0]
+            for info in ['name', 'type', 'size', 'used', 'available', 'iowait', 'diskutil']:
+                value = coll_info[comp.id]['diskstats'][info]
+                out.write("  - " + info.title() + ":  " + str(value) + "\n")
+        except Exception as ex:
+            out.write("    Unable to retrieve information for this section: %s\n" % ex )
+        out.write("\n\n")
+    # Get configured and running daemons for all collectors
+    coll_info[comp.id]['config']['daemons'] = {}
     out.write("* Daemons\n\n")
-    for d in coll.getZenossDaemonStates():
+    for d in comp.getZenossDaemonStates():
         dname = d['name']
-        if not collector_conf[coll.id]['daemons'].has_key(dname):
+        if not coll_info[comp.id]['config']['daemons'].has_key(dname):
             if d.has_key('pid') and d['pid']:
                 dpid = d['pid']
-                collector_conf[coll.id]['daemons'][dname] = {}
-                collector_conf[coll.id]['daemons'][dname]['running'] = 'Running'
-                collector_conf[coll.id]['daemons'][dname]['pid'] = dpid
+                coll_info[comp.id]['config']['daemons'][dname] = {}
+                coll_info[comp.id]['config']['daemons'][dname]['running'] = 'Running'
+                coll_info[comp.id]['config']['daemons'][dname]['pid'] = dpid
                 out.write("  - " + dname + ":  " +  "Running with PID:  " + dpid + "\n")
             else:
-                collector_conf[coll.id]['daemons'][dname] = {}
-                collector_conf[coll.id]['daemons'][dname]['running'] = 'Not Running'
+                coll_info[comp.id]['config']['daemons'][dname] = {}
+                coll_info[comp.id]['config']['daemons'][dname]['running'] = 'Not Running'
                 out.write("  - " + dname + ":  " +  "Not Running" + "\n")
-    for d in coll.devices():
+ 
+    coll_info[comp.id]['stats'] = {}
+    for d in comp.devices():
         d = d.primaryAq()
         dc = d.deviceClass().primaryAq().getPrimaryId()[10:]
-        if not collector_conf[coll.id]['stats'].has_key(dc):
-          collector_conf[coll.id]['stats'][dc] = {'devices': 0, 'datapoints': 0}
-        comps = d.getMonitoredComponents()
-        datapoints = sum([comp.getRRDDataPoints() for comp in comps], []) + d.getRRDDataPoints()
-        collector_conf[coll.id]['stats'][dc]['devices'] += 1
-        collector_conf[coll.id]['stats'][dc]['datapoints'] += len(datapoints)
+        if not coll_info[comp.id]['stats'].has_key(dc):
+          coll_info[comp.id]['stats'][dc] = {'devices': 0, 'datapoints': 0}
+        components = d.getMonitoredComponents()
+        datapoints = sum([component.getRRDDataPoints() for component in components], []) 
+        coll_info[comp.id]['stats'][dc]['devices'] += 1
+        coll_info[comp.id]['stats'][dc]['datapoints'] += len(datapoints)
     out.write("\n\n")
     out.write("* Datapoints\n\n")
     totalDevices = 0
     totalDatapoints = 0
-    for dclass in collector_conf[coll.id]['stats']:
-        totalDevices += collector_conf[coll.id]['stats'][dclass]['devices']
-        totalDatapoints += collector_conf[coll.id]['stats'][dclass]['datapoints']
-        out.write("  - " + dclass + ":  Devices:  "+ str(collector_conf[coll.id]['stats'][dclass]['devices']))
-        out.write(":  Datapoints:  " + str(collector_conf[coll.id]['stats'][dclass]['datapoints']) + "\n")
+    for dclass in coll_info[comp.id]['stats']:
+        totalDevices += coll_info[comp.id]['stats'][dclass]['devices']
+        totalDatapoints += coll_info[comp.id]['stats'][dclass]['datapoints']
+        out.write("  - " + dclass + ":  Devices:  "+ str(coll_info[comp.id]['stats'][dclass]['devices']))
+        out.write(":  Datapoints:  " + str(coll_info[comp.id]['stats'][dclass]['datapoints']) + "\n")
     out.write("  - Total:  Devices:  "+ str(totalDevices))
     out.write(":  Datapoints:  " + str(totalDatapoints) + "\n")
-    
-out.write("\n\n")
+
+
+
+# Write collector information to json file
+jsonout.write(json.dumps(coll_info))
+jsonout.write("\n\n")
+
+
+# Finished retrieving information; combine files in archive and delete original files.
 out.close()
+jsonout.close()
 
-# Putting this at the end for now, should move up closer to the master later
-
-# Just trying some stuff out here - move up to appropriate sections and write 
-#  out to the file, instead of printing to the console
-
-# for callHomeMetric in callHomeData:
-#    print
-#    print callHomeMetric
-#    print callHomeData[callHomeMetric]
-
-# TODO: call iostat -x and grab the util column for all remote collectors, hubs and master.
+archive = tarfile.open(outfile + ".tgz", "w|gz")
+archive.add(out.name)
+archive.add(jsonout.name)
+archive.close()
+os.remove(out.name)
+os.remove(jsonout.name)
