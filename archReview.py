@@ -20,7 +20,11 @@ import Globals, sys
 from Products.ZenUtils.Utils import convToUnits
 from Products.ZenUtils.ZenScriptBase import ZenScriptBase
 from Products.ZenUtils import GlobalConfig
-from Products.ZenUtils import ZenDB
+try:
+    from Products.ZenUtils import ZenDB
+except Exception as ex:
+    print "Can't access database in this version"
+
 
 # Define some constants
 #   Used to get output in desired order
@@ -698,7 +702,7 @@ for comp in componentGen(dmd, "PerformanceConf"):
         if not coll_info[comp.id]['stats'].has_key(dc):
           coll_info[comp.id]['stats'][dc] = {'devices': 0, 'datapoints': 0}
         components = d.getMonitoredComponents()
-        datapoints = sum([component.getRRDDataPoints() for component in components], []) 
+        datapoints = sum([component.getRRDDataPoints() for component in components], []) + d.getRRDDataPoints()
         coll_info[comp.id]['stats'][dc]['devices'] += 1
         coll_info[comp.id]['stats'][dc]['datapoints'] += len(datapoints)
     out.write("\n\n")
