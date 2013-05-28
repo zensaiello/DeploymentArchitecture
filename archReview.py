@@ -90,6 +90,7 @@ def processCpuInfo(cpuinfo):
     cpusummary['cores'] = 0
     cpusummary['hyperthreadcores'] = 0
     cpusummary['socketlist'] = {}
+    cpusummary['corelist'] = {}
     for cpuline in cpuinfo:
         if cpuline.count(':'):
             fieldname, value = cpuline.split(':')
@@ -110,6 +111,7 @@ def processCpuInfo(cpuinfo):
                 if fieldname=='processor':
                     proc_num = int(value.strip())
                     cpulist[proc_num] = {}
+                    cpusummary['corelist'][proc_num] = 1
                 else:
                     cpulist[proc_num][fieldname] = value.strip()
                     if fieldname == 'cpu MHz':
@@ -122,11 +124,18 @@ def processCpuInfo(cpuinfo):
                         cpulist[proc_num][fieldname] = final_value
     cpusummary['sockets'] = len(cpusummary['socketlist'])
     del cpusummary['socketlist']
+    if cpusummary['cores'] == 0:
+        cpusummary['cores'] = len(cpusummary['corelist'])
+    del cpusummary['corelist']
     if cpusummary['hyperthreadcores'] == cpusummary['cores']:
         cpusummary['hyperthreadcores'] = 'No hyperthreading (note:  may not be accurate for virtual guests)'
     cpusummary['model name'] = cpulist[0]['model name']
     cpusummary['cpu speed'] = cpulist[0]['cpu MHz']
     cpusummary['cache size'] = cpulist[0]['cache size']
+    if cpusummary['sockets'] == 0:
+        del cpusummary['sockets']
+    if cpusummary['hyperthreadcores'] == 0:
+        del cpusummary['hyperthreadcores']
     if not (cpusummary['virtualization platform'].lower().count("virtual") or cpusummary['virtualization platform'].lower().count("kvm")):
         del cpusummary['virtualization platform']
     return cpusummary
@@ -397,7 +406,7 @@ try:
     master_info['database'] = {}
     master_info['database']['zep'] = {}
     master_info['database']['zodb'] = {}
-    zep_db = ZenDB.ZenDB('zep', useAdmin=True)
+    zep_db = ZenDB.ZenDB('zep', useAdmin=False)
     db_params = zep_db.dbparams
     if master_hostname.count(db_params['host']):
         out.write(" * ZEP DB on Master\n\n")
@@ -405,7 +414,7 @@ try:
     else:
         out.write(" * ZEP DB on " + db_params['host'] + "\n\n")
         master_info['database']['zep']['host'] = db_params['host']
-    zodb_db = ZenDB.ZenDB('zodb', useAdmin=True)
+    zodb_db = ZenDB.ZenDB('zodb', useAdmin=False)
     db_params = zodb_db.dbparams
     if master_hostname.count(db_params['host']):
         out.write(" * ZODB on Master\n\n")
