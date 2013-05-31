@@ -83,7 +83,7 @@ def _discoverLocalhostNames():
 
 
 def processCpuInfo(cpuinfo):
-    cpucheck = ['processor', 'model name', 'cpu MHz', 'cache size', 'virtualization platform']
+    cpucheck = ['processor', 'model name', 'cpu MHz', 'cache size']
     cpulist = {}
     cpusummary = {}
     cpusummary['sockets'] = 0
@@ -106,7 +106,6 @@ def processCpuInfo(cpuinfo):
                 socket = int(value.strip())
                 if not cpusummary['socketlist'].has_key(socket):
                     cpusummary['socketlist'][socket] = 1
-
             if cpucheck.count(fieldname):
                 if fieldname=='processor':
                     proc_num = int(value.strip())
@@ -137,9 +136,8 @@ def processCpuInfo(cpuinfo):
     if cpusummary['hyperthreadcores'] == 0:
         del cpusummary['hyperthreadcores']
     if not (cpusummary['virtualization platform'].lower().count("virtual") or cpusummary['virtualization platform'].lower().count("kvm")):
-        del cpusummary['virtualization platform']
+        cpusummary['virtualization platform'] = 'Unable to detect'
     return cpusummary
-	
 	
 def processMemInfo(meminfo):
     memcheck = ['MemTotal', 'MemFree', 'SwapTotal', 'SwapFree']
@@ -225,14 +223,14 @@ def executeLocalCommand(cmd):
         stdout, stderr = p.communicate()
         return stdout.splitlines()
     except Exception as ex:
-        print ex
+        print ex.message
 
 def executeRemoteCommand(cmd, remoteHost):
     try:
         stdout = remoteHost.executeCommand(cmd, "zenoss")[1].splitlines()
         return stdout
     except Exception as ex:
-        print ex
+        print ex.message
 
 def getDeviceClassStats(collector):
     # Need to fix - just copied over
@@ -242,10 +240,10 @@ def getDeviceClassStats(collector):
     for dclass in coll_info[coll.id]['stats']:
         totalDevices += coll_info[coll.id]['stats'][dclass]['devices']
         totalDatapoints += coll_info[coll.id]['stats'][dclass]['datapoints']
-        #out.write("  - " + dclass + ":  Devices:  "+ str(coll_info[coll.id]['stats'][dclass]['devices']))
-        #out.write(":  Datapoints:  " + str(coll_info[coll.id]['stats'][dclass]['datapoints']) + "\n")
-    #out.write("  - Total:  Devices:  "+ str(totalDevices))
-    #out.write(":  Datapoints:  " + str(totalDatapoints) + "\n")
+        # out.write("  - " + dclass + ":  Devices:  "+ str(coll_info[coll.id]['stats'][dclass]['devices']))
+        # out.write(":  Datapoints:  " + str(coll_info[coll.id]['stats'][dclass]['datapoints']) + "\n")
+    # out.write("  - Total:  Devices:  "+ str(totalDevices))
+    # out.write(":  Datapoints:  " + str(totalDatapoints) + "\n")
 
 def componentGen(dmd, comp_type):
     if comp_type=='HubConf':
@@ -265,8 +263,6 @@ def hubGen(dmd):
 def collectorGen(dmd):
     for coll in dmd.Monitors.Hub.objectValues("HubConf"):
         yield hub
-
-#for coll in dmd.Monitors.Performance.objectValues("PerformanceConf"):
 
 
 # Main part of program
@@ -310,10 +306,12 @@ master_info = {}
 out.write("* CPU Information\n\n")
 try:
     cpuinfo = executeLocalCommand("cat /proc/cpuinfo")
-    virtual_string = executeLocalCommand("lshal | grep -i system.hardware.product | cut -d '=' -f 2 | cut -d ' ' -f 2")[0]
-    if virtual_string.lower().find('virtual'):
-        virtual_string = "virtualization platform\t:  " + virtual_string.replace("'","")
-        cpuinfo.append(virtual_string)
+    try:
+        virtual_string = executeLocalCommand("lshal | grep -i system.hardware.product | cut -d\"'\" -f2")[0].strip(':')
+    except:
+        virtual_string=""
+    virtual_string = "virtualization platform\t:  " + virtual_string
+    cpuinfo.append(virtual_string)
     master_info['cpuinfo'] = processCpuInfo(cpuinfo)
     for info in cpuInfoNames:
         if master_info['cpuinfo'].has_key(info):
@@ -321,8 +319,7 @@ try:
             value = master_info['cpuinfo'][info]
             out.write("  - " + info.title() + ":  " + str(value) + "\n")
 except Exception as ex:
-    print "Error:  %s\n" % ex.message
-    out.write("    Unable to retrieve information for this section: %s\n" % ex )
+    out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
 out.write("\n\n")
 
 # Get memory information from master
@@ -336,7 +333,7 @@ try:
             value = master_info['meminfo'][info]
             out.write("  - " + info + ":  " + str(value) + "\n")
 except Exception as ex:
-    out.write("    Unable to retrieve information for this section: %s\n" % ex )
+    out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
 out.write("\n\n")
 
 # Try to get disk information for master
@@ -349,7 +346,8 @@ try:
     del fstats[0:8]
     fstemp = fstats[0]
     if "/" in fstemp:
-        fsname = fstemp.split("/")[3]
+        fsnametemp = fstemp.split("/")
+        fsname = fsnametemp[len(fsnametemp)-1]
     else:
         fsname = fstemp
     master_info['diskstats']['name'] = fsname
@@ -357,23 +355,20 @@ try:
     master_info['diskstats']['size'] = fstats[2]
     master_info['diskstats']['used'] = fstats[3]
     master_info['diskstats']['available'] = fstats[4]
-    ftemp = executeLocalCommand("iostat -xN " + fsname)
-    del ftemp[0:2]
-    ftemp1 = ftemp[0].split()
-    num = ftemp1.index("%iowait")
-    del ftemp[0]
-    master_info['diskstats']['iowait'] = ftemp[0].split()[num-1]
-    del ftemp[0:2]
-    ftemp1 = ftemp[0].split()
-    num = ftemp1.index("%util")
-    del ftemp[0]
-    master_info['diskstats']['diskutil'] = ftemp[0].split()[num]
-    del ftemp[0]
+    ftemp1 = executeLocalCommand("iostat -xN " + fsname)
+    ftemp3 = [ftemp2.split() for ftemp2 in ftemp1]
+    ftemp = [val for subl in ftemp3 for val in subl]
+    num = ftemp.index('avg-cpu:') + 1
+    del ftemp[0:num]
+    num = ftemp.index('%iowait')
+    num1 = ftemp.index('%idle') + 1
+    master_info['diskstats']['iowait'] = ftemp[num+num1]
+    master_info['diskstats']['diskutil'] = ftemp[len(ftemp) - 1]
     for info in ['name', 'type', 'size', 'used', 'available', 'iowait', 'diskutil']:
         value = master_info['diskstats'][info]
         out.write("  - " + info.title() + ":  " + str(value) + "\n")
 except Exception as ex:
-    out.write("    Unable to retrieve information for this section: %s\n" % ex )
+    out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
 out.write("\n\n")
 
 # Try to get memcached information
@@ -395,7 +390,7 @@ try:
         out.write("  - " + info + ":  " + str(value) + "\n")
         master_info['memcached'][info] = value
 except Exception as ex:
-    out.write("    Unable to retrieve information for this section: %s\n" % ex )
+    out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
 out.write("\n\n")
 
 # Try to get database information (currently only works on 4.2.X)
@@ -422,7 +417,6 @@ try:
     else:
         out.write(" * ZODB on " + db_params['host'] + "\n\n")
         master_info['database']['zodb']['host'] = db_params['host']
-
     dbsizes, stderr = executeDbSql(zep_db, "SELECT table_schema,round(SUM(data_length+index_length)/1024/1024,1) AS size_mb FROM information_schema.tables WHERE table_schema IN ('zodb','zodb_session','zenoss_zep') GROUP BY table_schema;")
     out.write(" * Database sizes\n\n")
     master_info['database']['sizes'] = {}
@@ -432,7 +426,7 @@ try:
         out.write("  - " + dbname + ":  " + convToUnits(dbsizeval) + "\n")
         master_info['database']['sizes'][dbname] = convToUnits(dbsizeval)
 except Exception as ex:
-    out.write("    Unable to retrieve information for this section: %s\n" % ex )
+    out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
 out.write("\n\n")
 
 #Try to get version information (currently only works on 4.2.x)
@@ -454,7 +448,7 @@ try:
     master_info['versions']['zenoss_rpm'] = callHomeData['Zenoss Env Data']['RPM - zenoss']
     master_info['versions']['zends_rpm'] = callHomeData['Zenoss Env Data']['RPM - zends']
 except Exception as ex:
-    out.write("    Unable to retrieve information for this section: %s\n" % ex )
+    out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
 out.write("\n\n")
 
 # Try to get the list of installed ZenPacks (currently only works on 4.2.x)
@@ -468,7 +462,7 @@ try:
         out.write(" - " + zenpack + "\n")
         master_info['zenpacks'].append(zenpack)
 except Exception as ex:
-    out.write("    Unable to retrieve information for this section: %s\n" % ex )
+    out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
 out.write("\n\n")
 # Write Master information to json file
 jsonout.write(json.dumps(master_info))
@@ -500,10 +494,12 @@ for comp in componentGen(dmd, "HubConf"):
         out.write("* CPU Information\n\n")
         try:
             cpuinfo = executeRemoteCommand("cat /proc/cpuinfo", comp)
-            virtual_string = executeRemoteCommand("lshal | grep -i system.hardware.product | cut -d '=' -f 2 | cut -d ' ' -f 2", comp)[0]
-            if virtual_string.lower().find('virtual'):
-                virtual_string = "virtualization platform\t:  " + virtual_string.replace("'","")
-                cpuinfo.append(virtual_string)
+            try:
+                virtual_string = executeRemoteCommand("lshal | grep -i system.hardware.product | cut -d\"'\" -f2", comp)[0].strip(':')
+            except:
+                virtual_string=""
+            virtual_string = "virtualization platform\t:  " + virtual_string
+            cpuinfo.append(virtual_string)
             hub_info[comp.id]['cpuinfo'] = processCpuInfo(cpuinfo)
             for info in cpuInfoNames:
                 if hub_info[comp.id]['cpuinfo'].has_key(info):
@@ -511,8 +507,7 @@ for comp in componentGen(dmd, "HubConf"):
                     value = hub_info[comp.id]['cpuinfo'][info]
                     out.write("  - " + info.title() + ":  " + str(value) + "\n")
         except Exception as ex:
-            print "Error:  %s\n" % ex.message
-            out.write("    Unable to retrieve information for this section: %s\n" % ex )
+            out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
         out.write("\n\n")
 
         # Get memory information from hub
@@ -526,7 +521,7 @@ for comp in componentGen(dmd, "HubConf"):
                     value = hub_info[comp.id]['meminfo'][info]
                     out.write("  - " + info + ":  " + str(value) + "\n")
         except Exception as ex:
-            out.write("    Unable to retrieve information for this section: %s\n" % ex )
+            out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
         out.write("\n\n")
 
         # Try to get disk information for hub
@@ -539,7 +534,8 @@ for comp in componentGen(dmd, "HubConf"):
             del fstats[0:8]
             fstemp = fstats[0]
             if "/" in fstemp:
-                fsname = fstemp.split("/")[3]
+                fsnametemp = fstemp.split("/")
+                fsname = fsnametemp[len(fsnametemp)-1]
             else:
                 fsname = fstemp
             hub_info[comp.id]['diskstats']['name'] = fsname
@@ -547,23 +543,20 @@ for comp in componentGen(dmd, "HubConf"):
             hub_info[comp.id]['diskstats']['size'] = fstats[2]
             hub_info[comp.id]['diskstats']['used'] = fstats[3]
             hub_info[comp.id]['diskstats']['available'] = fstats[4]
-            ftemp = executeRemoteCommand("iostat -xN " + fsname, comp)
-            del ftemp[0:2]
-            ftemp1 = ftemp[0].split()
-            num = ftemp1.index("%iowait")
-            del ftemp[0]
-            hub_info[comp.id]['diskstats']['iowait'] = ftemp[0].split()[num-1]
-            del ftemp[0:2]
-            ftemp1 = ftemp[0].split()
-            num = ftemp1.index("%util")
-            del ftemp[0]
-            hub_info[comp.id]['diskstats']['diskutil'] = ftemp[0].split()[num]
-            del ftemp[0]
+            ftemp1 = executeLocalCommand("iostat -xN " + fsname)
+            ftemp3 = [ftemp2.split() for ftemp2 in ftemp1]
+            ftemp = [val for subl in ftemp3 for val in subl]
+            num = ftemp.index('avg-cpu:') + 1
+            del ftemp[0:num]
+            num = ftemp.index('%iowait')
+            num1 = ftemp.index('%idle') + 1
+            hub_info[comp.id]['diskstats']['iowait'] = ftemp[num+num1]
+            hub_info[comp.id]['diskstats']['diskutil'] = ftemp[len(ftemp) - 1]
             for info in ['name', 'type', 'size', 'used', 'available', 'iowait', 'diskutil']:
                 value = hub_info[comp.id]['diskstats'][info]
                 out.write("  - " + info.title() + ":  " + str(value) + "\n")
         except Exception as ex:
-            out.write("    Unable to retrieve information for this section: %s\n" % ex )
+            out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
         out.write("\n\n")
     # Get configured and running daemons for all hubs
     hub_info[comp.id]['config']['daemons'] = {}
@@ -622,10 +615,12 @@ for comp in componentGen(dmd, "PerformanceConf"):
         out.write("* CPU Information\n\n")
         try:
             cpuinfo = executeRemoteCommand("cat /proc/cpuinfo", comp)
-            virtual_string = executeRemoteCommand("lshal | grep -i system.hardware.product | cut -d '=' -f 2 | cut -d ' ' -f 2", comp)[0]
-            if virtual_string.lower().find('virtual'):
-                virtual_string = "virtualization platform\t:  " + virtual_string.replace("'","")
-                cpuinfo.append(virtual_string)
+            try:
+                virtual_string = executeRemoteCommand("lshal | grep -i system.hardware.product | cut -d\"'\" -f2", comp)[0].strip(':')
+            except:
+                virtual_string=""
+            virtual_string = "virtualization platform\t:  " + virtual_string
+            cpuinfo.append(virtual_string)
             coll_info[comp.id]['cpuinfo'] = processCpuInfo(cpuinfo)
             for info in cpuInfoNames:
                 if coll_info[comp.id]['cpuinfo'].has_key(info):
@@ -633,8 +628,7 @@ for comp in componentGen(dmd, "PerformanceConf"):
                     value = coll_info[comp.id]['cpuinfo'][info]
                     out.write("  - " + info.title() + ":  " + str(value) + "\n")
         except Exception as ex:
-            print "Error:  %s\n" % ex.message
-            out.write("    Unable to retrieve information for this section: %s\n" % ex )
+            out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
         out.write("\n\n")
 
         # Get memory information from collector
@@ -648,7 +642,7 @@ for comp in componentGen(dmd, "PerformanceConf"):
                     value = coll_info[comp.id]['meminfo'][info]
                     out.write("  - " + info + ":  " + str(value) + "\n")
         except Exception as ex:
-            out.write("    Unable to retrieve information for this section: %s\n" % ex )
+            out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
         out.write("\n\n")
 
         # Try to get disk information for collector
@@ -661,7 +655,8 @@ for comp in componentGen(dmd, "PerformanceConf"):
             del fstats[0:8]
             fstemp = fstats[0]
             if "/" in fstemp:
-                fsname = fstemp.split("/")[3]
+                fsnametemp = fstemp.split("/")
+                fsname = fsnametemp[len(fsnametemp)-1]
             else:
                 fsname = fstemp
             coll_info[comp.id]['diskstats']['name'] = fsname
@@ -669,23 +664,20 @@ for comp in componentGen(dmd, "PerformanceConf"):
             coll_info[comp.id]['diskstats']['size'] = fstats[2]
             coll_info[comp.id]['diskstats']['used'] = fstats[3]
             coll_info[comp.id]['diskstats']['available'] = fstats[4]
-            ftemp = executeRemoteCommand("iostat -xN " + fsname, comp)
-            del ftemp[0:2]
-            ftemp1 = ftemp[0].split()
-            num = ftemp1.index("%iowait")
-            del ftemp[0]
-            coll_info[comp.id]['diskstats']['iowait'] = ftemp[0].split()[num-1]
-            del ftemp[0:2]
-            ftemp1 = ftemp[0].split()
-            num = ftemp1.index("%util")
-            del ftemp[0]
-            coll_info[comp.id]['diskstats']['diskutil'] = ftemp[0].split()[num]
-            del ftemp[0]
+            ftemp1 = executeLocalCommand("iostat -xN " + fsname)
+            ftemp3 = [ftemp2.split() for ftemp2 in ftemp1]
+            ftemp = [val for subl in ftemp3 for val in subl]
+            num = ftemp.index('avg-cpu:') + 1
+            del ftemp[0:num]
+            num = ftemp.index('%iowait')
+            num1 = ftemp.index('%idle') + 1
+            coll_info[comp.id]['diskstats']['iowait'] = ftemp[num+num1]
+            coll_info[comp.id]['diskstats']['diskutil'] = ftemp[len(ftemp) - 1]
             for info in ['name', 'type', 'size', 'used', 'available', 'iowait', 'diskutil']:
                 value = coll_info[comp.id]['diskstats'][info]
                 out.write("  - " + info.title() + ":  " + str(value) + "\n")
         except Exception as ex:
-            out.write("    Unable to retrieve information for this section: %s\n" % ex )
+            out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
         out.write("\n\n")
     # Get configured and running daemons for all collectors
     coll_info[comp.id]['config']['daemons'] = {}
