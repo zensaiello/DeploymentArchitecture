@@ -104,7 +104,7 @@ def processCpuInfo(cpuinfo):
                 cpusummary['hyperthreadcores'] = int(value.strip())
             if fieldname == 'physical id':
                 socket = int(value.strip())
-                if not cpusummary['socketlist'].has_key(socket):
+                if not socket in cpusummary['socketlist']:
                     cpusummary['socketlist'][socket] = 1
             if cpucheck.count(fieldname):
                 if fieldname=='processor':
@@ -298,7 +298,7 @@ master_hostname =  list(_LOCALHOSTNAMES)
 out.write("* Hostnames and IP addresses for this host\n\n")
 master_hostname.sort()
 for hname in master_hostname:
-   out.write("  - " + hname + "\n")
+   out.write("  * " + hname + "\n")
 out.write("\n\n")
 
 # Try to get cpu information from master
@@ -314,10 +314,10 @@ try:
     cpuinfo.append(virtual_string)
     master_info['cpuinfo'] = processCpuInfo(cpuinfo)
     for info in cpuInfoNames:
-        if master_info['cpuinfo'].has_key(info):
+        if info in master_info['cpuinfo']:
             fieldname = info
             value = master_info['cpuinfo'][info]
-            out.write("  - " + info.title() + ":  " + str(value) + "\n")
+            out.write("  * " + info.title() + ":  " + str(value) + "\n")
 except Exception as ex:
     out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
 out.write("\n\n")
@@ -328,10 +328,10 @@ try:
     meminfo = executeLocalCommand("cat /proc/meminfo")
     master_info['meminfo'] = processMemInfo(meminfo)
     for info in memInfoNames:
-        if master_info['meminfo'].has_key(info):
+        if info in master_info['meminfo']:
             fieldname = info
             value = master_info['meminfo'][info]
-            out.write("  - " + info + ":  " + str(value) + "\n")
+            out.write("  * " + info + ":  " + str(value) + "\n")
 except Exception as ex:
     out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
 out.write("\n\n")
@@ -366,7 +366,7 @@ try:
     master_info['diskstats']['diskutil'] = ftemp[len(ftemp) - 1]
     for info in ['name', 'type', 'size', 'used', 'available', 'iowait', 'diskutil']:
         value = master_info['diskstats'][info]
-        out.write("  - " + info.title() + ":  " + str(value) + "\n")
+        out.write("  * " + info.title() + ":  " + str(value) + "\n")
 except Exception as ex:
     out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
 out.write("\n\n")
@@ -387,7 +387,7 @@ try:
     memcinfo = processMemcacheInfo(memcoutput)
     for info in ['Maximum Size', 'Current Size', 'Current Connections', 'Evictions']:
         value = memcinfo[info]
-        out.write("  - " + info + ":  " + str(value) + "\n")
+        out.write("  * " + info + ":  " + str(value) + "\n")
         master_info['memcached'][info] = value
 except Exception as ex:
     out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
@@ -404,26 +404,26 @@ try:
     zep_db = ZenDB.ZenDB('zep', useAdmin=False)
     db_params = zep_db.dbparams
     if master_hostname.count(db_params['host']):
-        out.write(" * ZEP DB on Master\n\n")
+        out.write("* ZEP DB on Master\n\n\n")
         master_info['database']['zep']['host'] = 'master'
     else:
-        out.write(" * ZEP DB on " + db_params['host'] + "\n\n")
+        out.write("* ZEP DB on " + db_params['host'] + "\n\n\n")
         master_info['database']['zep']['host'] = db_params['host']
     zodb_db = ZenDB.ZenDB('zodb', useAdmin=False)
     db_params = zodb_db.dbparams
     if master_hostname.count(db_params['host']):
-        out.write(" * ZODB on Master\n\n")
+        out.write("* ZODB on Master\n\n\n")
         master_info['database']['zodb']['host'] = 'master'
     else:
-        out.write(" * ZODB on " + db_params['host'] + "\n\n")
+        out.write("* ZODB on " + db_params['host'] + "\n\n\n")
         master_info['database']['zodb']['host'] = db_params['host']
     dbsizes, stderr = executeDbSql(zep_db, "SELECT table_schema,round(SUM(data_length+index_length)/1024/1024,1) AS size_mb FROM information_schema.tables WHERE table_schema IN ('zodb','zodb_session','zenoss_zep') GROUP BY table_schema;")
-    out.write(" * Database sizes\n\n")
+    out.write("* Database sizes\n\n")
     master_info['database']['sizes'] = {}
     for dbsize in dbsizes.splitlines():
         dbname, dbsizeval = dbsize.split('\t')
         dbsizeval = int(float(dbsizeval) * 1024 * 1024)
-        out.write("  - " + dbname + ":  " + convToUnits(dbsizeval) + "\n")
+        out.write("  * " + dbname + ":  " + convToUnits(dbsizeval) + "\n")
         master_info['database']['sizes'][dbname] = convToUnits(dbsizeval)
 except Exception as ex:
     out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
@@ -436,30 +436,30 @@ out.write("\n")
 try:
     master_info['versions'] = {}
     callHomeData = json.loads(dmd.callHome.metrics)
-    out.write(" * Zenoss Version\n\n")
-    out.write("  - " + callHomeData['Zenoss App Data']['Zenoss Version'] + "\n\n")
+    out.write("* Zenoss Version\n\n")
+    out.write("  * " + callHomeData['Zenoss App Data']['Zenoss Version'] + "\n\n\n")
     master_info['versions']['zenoss_version'] = callHomeData['Zenoss App Data']['Zenoss Version']
-    out.write(" * OS Version\n\n")
-    out.write("  - " + callHomeData['Host Data']['OS'] + "\n\n")
+    out.write("* OS Version\n\n")
+    out.write("  * " + callHomeData['Host Data']['OS'] + "\n\n\n")
     master_info['versions']['os_version'] = callHomeData['Host Data']['OS']
-    out.write(" * RPMs\n\n")
-    out.write("  - " + callHomeData['Zenoss Env Data']['RPM - zenoss'] + "\n")
-    out.write("  - " + callHomeData['Zenoss Env Data']['RPM - zends'] + "\n")
+    out.write("* RPMs\n\n")
+    out.write("  * " + callHomeData['Zenoss Env Data']['RPM - zenoss'] + "\n")
+    out.write("  * " + callHomeData['Zenoss Env Data']['RPM - zends'] + "\n")
     master_info['versions']['zenoss_rpm'] = callHomeData['Zenoss Env Data']['RPM - zenoss']
     master_info['versions']['zends_rpm'] = callHomeData['Zenoss Env Data']['RPM - zends']
+    out.write("\n")
 except Exception as ex:
     out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
-out.write("\n\n")
+out.write("\n")
 
 # Try to get the list of installed ZenPacks (currently only works on 4.2.x)
-out.write("Installed Zenpacks\n")
-out.write("=============================================================================================================================================================\n")
+out.write("* Installed Zenpacks\n")
 out.write("\n")
 try:
     callHomeData = json.loads(dmd.callHome.metrics)
     master_info['zenpacks'] = []
     for zenpack in callHomeData['Zenoss App Data']['Zenpack']:
-        out.write(" - " + zenpack + "\n")
+        out.write("  * " + zenpack + "\n")
         master_info['zenpacks'].append(zenpack)
 except Exception as ex:
     out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
@@ -502,10 +502,10 @@ for comp in componentGen(dmd, "HubConf"):
             cpuinfo.append(virtual_string)
             hub_info[comp.id]['cpuinfo'] = processCpuInfo(cpuinfo)
             for info in cpuInfoNames:
-                if hub_info[comp.id]['cpuinfo'].has_key(info):
+                if info in hub_info[comp.id]['cpuinfo']:
                     fieldname = info
                     value = hub_info[comp.id]['cpuinfo'][info]
-                    out.write("  - " + info.title() + ":  " + str(value) + "\n")
+                    out.write("  * " + info.title() + ":  " + str(value) + "\n")
         except Exception as ex:
             out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
         out.write("\n\n")
@@ -516,10 +516,10 @@ for comp in componentGen(dmd, "HubConf"):
             meminfo = executeRemoteCommand("cat /proc/meminfo", comp)
             hub_info[comp.id]['meminfo'] = processMemInfo(meminfo)
             for info in memInfoNames:
-                if hub_info[comp.id]['meminfo'].has_key(info):
+                if info in hub_info[comp.id]['meminfo']:
                     fieldname = info
                     value = hub_info[comp.id]['meminfo'][info]
-                    out.write("  - " + info + ":  " + str(value) + "\n")
+                    out.write("  * " + info + ":  " + str(value) + "\n")
         except Exception as ex:
             out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
         out.write("\n\n")
@@ -543,7 +543,7 @@ for comp in componentGen(dmd, "HubConf"):
             hub_info[comp.id]['diskstats']['size'] = fstats[2]
             hub_info[comp.id]['diskstats']['used'] = fstats[3]
             hub_info[comp.id]['diskstats']['available'] = fstats[4]
-            ftemp1 = executeLocalCommand("iostat -xN " + fsname)
+            ftemp1 = executeRemoteCommand("iostat -xN " + fsname, comp)
             ftemp3 = [ftemp2.split() for ftemp2 in ftemp1]
             ftemp = [val for subl in ftemp3 for val in subl]
             num = ftemp.index('avg-cpu:') + 1
@@ -554,7 +554,7 @@ for comp in componentGen(dmd, "HubConf"):
             hub_info[comp.id]['diskstats']['diskutil'] = ftemp[len(ftemp) - 1]
             for info in ['name', 'type', 'size', 'used', 'available', 'iowait', 'diskutil']:
                 value = hub_info[comp.id]['diskstats'][info]
-                out.write("  - " + info.title() + ":  " + str(value) + "\n")
+                out.write("  * " + info.title() + ":  " + str(value) + "\n")
         except Exception as ex:
             out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
         out.write("\n\n")
@@ -564,26 +564,26 @@ for comp in componentGen(dmd, "HubConf"):
     out.write("* Daemons\n\n")
     for d in comp.getZenossDaemonStates():
         dname = d['name']
-        if not hub_info[comp.id]['config']['daemons'].has_key(dname):
-            if d.has_key('pid') and d['pid']:
+        if not dname in hub_info[comp.id]['config']['daemons']:
+            if 'pid' in d and d['pid']:
                 dpid = d['pid']
                 hub_info[comp.id]['config']['daemons'][dname] = {}
                 hub_info[comp.id]['config']['daemons'][dname]['running'] = 'Running'
                 hub_info[comp.id]['config']['daemons'][dname]['pid'] = dpid
-                out.write("  - " + dname + ":  " +  "Running with PID:  " + dpid + "\n")
+                out.write("  * " + dname + ":  " +  "Running with PID:  " + dpid + "\n")
             else:
                 hub_info[comp.id]['config']['daemons'][dname] = {}
                 hub_info[comp.id]['config']['daemons'][dname]['running'] = 'Not Running'
-                out.write("  - " + dname + ":  " +  "Not Running" + "\n")
+                out.write("  * " + dname + ":  " +  "Not Running" + "\n")
     out.write("\n\n")
     # Get configured collectors for all hubs
     out.write("* Collectors (on this hub)\n\n")
     for coll in comp.collectors():
         cname = coll.id
         hname = coll.hostname
-        if not hub_info[comp.id]['collectors'].has_key(cname):
+        if not cname in hub_info[comp.id]['collectors']:
             hub_info[comp.id]['collectors'][cname] = hname
-            out.write("  - " + cname + " on host:  " + hname + "\n")
+            out.write("  * " + cname + " on host:  " + hname + "\n")
 
 # Write Hub information to json file
 jsonout.write(json.dumps(hub_info))
@@ -623,10 +623,10 @@ for comp in componentGen(dmd, "PerformanceConf"):
             cpuinfo.append(virtual_string)
             coll_info[comp.id]['cpuinfo'] = processCpuInfo(cpuinfo)
             for info in cpuInfoNames:
-                if coll_info[comp.id]['cpuinfo'].has_key(info):
+                if info in coll_info[comp.id]['cpuinfo']:
                     fieldname = info
                     value = coll_info[comp.id]['cpuinfo'][info]
-                    out.write("  - " + info.title() + ":  " + str(value) + "\n")
+                    out.write("  * " + info.title() + ":  " + str(value) + "\n")
         except Exception as ex:
             out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
         out.write("\n\n")
@@ -637,10 +637,10 @@ for comp in componentGen(dmd, "PerformanceConf"):
             meminfo = executeRemoteCommand("cat /proc/meminfo", comp)
             coll_info[comp.id]['meminfo'] = processMemInfo(meminfo)
             for info in memInfoNames:
-                if coll_info[comp.id]['meminfo'].has_key(info):
+                if info in coll_info[comp.id]['meminfo']:
                     fieldname = info
                     value = coll_info[comp.id]['meminfo'][info]
-                    out.write("  - " + info + ":  " + str(value) + "\n")
+                    out.write("  * " + info + ":  " + str(value) + "\n")
         except Exception as ex:
             out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
         out.write("\n\n")
@@ -649,7 +649,7 @@ for comp in componentGen(dmd, "PerformanceConf"):
         out.write("* Filesystem Information - /opt/zenoss\n\n")
         try:
             coll_info[comp.id]['diskstats'] = {}
-            fstemp = executeRemoteCommand("df -hT /opt/zenoss", comp)
+            fstemp = executeRemoteCommand("df -hT /opt/zenoss/perf", comp)
             fstatstmp = [fstemp1.split() for fstemp1 in fstemp]
             fstats = [val for subl in fstatstmp for val in subl]
             del fstats[0:8]
@@ -664,7 +664,7 @@ for comp in componentGen(dmd, "PerformanceConf"):
             coll_info[comp.id]['diskstats']['size'] = fstats[2]
             coll_info[comp.id]['diskstats']['used'] = fstats[3]
             coll_info[comp.id]['diskstats']['available'] = fstats[4]
-            ftemp1 = executeLocalCommand("iostat -xN " + fsname)
+            ftemp1 = executeRemoteCommand("iostat -xN " + fsname, comp)
             ftemp3 = [ftemp2.split() for ftemp2 in ftemp1]
             ftemp = [val for subl in ftemp3 for val in subl]
             num = ftemp.index('avg-cpu:') + 1
@@ -675,7 +675,7 @@ for comp in componentGen(dmd, "PerformanceConf"):
             coll_info[comp.id]['diskstats']['diskutil'] = ftemp[len(ftemp) - 1]
             for info in ['name', 'type', 'size', 'used', 'available', 'iowait', 'diskutil']:
                 value = coll_info[comp.id]['diskstats'][info]
-                out.write("  - " + info.title() + ":  " + str(value) + "\n")
+                out.write("  * " + info.title() + ":  " + str(value) + "\n")
         except Exception as ex:
             out.write("    Unable to retrieve information for this section: %s\n" % ex.message )
         out.write("\n\n")
@@ -684,23 +684,23 @@ for comp in componentGen(dmd, "PerformanceConf"):
     out.write("* Daemons\n\n")
     for d in comp.getZenossDaemonStates():
         dname = d['name']
-        if not coll_info[comp.id]['config']['daemons'].has_key(dname):
-            if d.has_key('pid') and d['pid']:
+        if not dname in coll_info[comp.id]['config']['daemons']:
+            if 'pid' in d and d['pid']:
                 dpid = d['pid']
                 coll_info[comp.id]['config']['daemons'][dname] = {}
                 coll_info[comp.id]['config']['daemons'][dname]['running'] = 'Running'
                 coll_info[comp.id]['config']['daemons'][dname]['pid'] = dpid
-                out.write("  - " + dname + ":  " +  "Running with PID:  " + dpid + "\n")
+                out.write("  * " + dname + ":  " +  "Running with PID:  " + dpid + "\n")
             else:
                 coll_info[comp.id]['config']['daemons'][dname] = {}
                 coll_info[comp.id]['config']['daemons'][dname]['running'] = 'Not Running'
-                out.write("  - " + dname + ":  " +  "Not Running" + "\n")
+                out.write("  * " + dname + ":  " +  "Not Running" + "\n")
  
     coll_info[comp.id]['stats'] = {}
     for d in comp.devices():
         d = d.primaryAq()
         dc = d.deviceClass().primaryAq().getPrimaryId()[10:]
-        if not coll_info[comp.id]['stats'].has_key(dc):
+        if not dc in coll_info[comp.id]['stats']:
           coll_info[comp.id]['stats'][dc] = {'devices': 0, 'datapoints': 0}
         components = d.getMonitoredComponents()
         datapoints = sum([component.getRRDDataPoints() for component in components], []) + d.getRRDDataPoints()
@@ -713,9 +713,9 @@ for comp in componentGen(dmd, "PerformanceConf"):
     for dclass in coll_info[comp.id]['stats']:
         totalDevices += coll_info[comp.id]['stats'][dclass]['devices']
         totalDatapoints += coll_info[comp.id]['stats'][dclass]['datapoints']
-        out.write("  - " + dclass + ":  Devices:  "+ str(coll_info[comp.id]['stats'][dclass]['devices']))
+        out.write("  * " + dclass + ":  Devices:  "+ str(coll_info[comp.id]['stats'][dclass]['devices']))
         out.write(":  Datapoints:  " + str(coll_info[comp.id]['stats'][dclass]['datapoints']) + "\n")
-    out.write("  - Total:  Devices:  "+ str(totalDevices))
+    out.write("  * Total:  Devices:  "+ str(totalDevices))
     out.write(":  Datapoints:  " + str(totalDatapoints) + "\n")
 
 
