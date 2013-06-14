@@ -19,7 +19,10 @@ import json
 import Globals, sys
 from Products.ZenUtils.Utils import convToUnits
 from Products.ZenUtils.ZenScriptBase import ZenScriptBase
-from Products.ZenUtils import GlobalConfig
+try:
+    from Products.ZenUtils import GlobalConfig
+except Exception as ex:
+    print "Can't access global.conf in this version"
 try:
     from Products.ZenUtils import ZenDB
 except Exception as ex:
