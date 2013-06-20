@@ -1,0 +1,8 @@
+This script should be run on the master, as the Zenoss user.
+It will not pick up anything related to HA.  
+
+To run it:
+./archReview.py –f <filename to create> -c <company name> -t <title of report>
+
+The –f and –t options are especially useful if you have multiple environments (eg, Dev, Test).
+The script will append a .tgz to the filename supplied (the output is a gzipped tar file). 

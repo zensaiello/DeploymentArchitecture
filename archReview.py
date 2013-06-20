@@ -335,6 +335,25 @@ try:
             out.write("  * " + info.title() + ":  " + str(value) + "\n")
 except Exception as ex:
     out.write("    Unable to retrieve information for this section: %s\n" % ex.message)
+
+try:
+    master_info['cpuinfo']['stats'] = {}
+    cpu_out = executeLocalCommand("mpstat -u 30 1")
+    master_info['cpuinfo']['stats']['average'] = {}
+    cpu_temp = cpu_out[3].split()
+    master_info['cpuinfo']['stats']['average']['user'] = cpu_temp[3]
+    master_info['cpuinfo']['stats']['average']['system'] = cpu_temp[5]
+    master_info['cpuinfo']['stats']['average']['idle'] = cpu_temp[11]
+    print master_info['cpuinfo']['stats']
+    out.write("  * Last 30s Performance:  User%:  " +
+               master_info['cpuinfo']['stats']['average']['user'] + 
+               "  System%:  " +
+               master_info['cpuinfo']['stats']['average']['system'] + 
+               "  Idle%:  " +
+                master_info['cpuinfo']['stats']['average']['idle'] + "\n")
+except Exception as ex:
+    print ex.message
+    out.write("    Unable to retrieve information for this section: %s\n" % ex.message)
 out.write("\n\n")
 
 # Get memory information from master
@@ -732,6 +751,21 @@ for comp in componentGen(dmd, "PerformanceConf"):
         out.write(":  Datapoints:  " + str(coll_info[comp.id]['stats'][dclass]['datapoints']) + "\n")
     out.write("  * Total:  Devices:  " + str(totalDevices))
     out.write(":  Datapoints:  " + str(totalDatapoints) + "\n")
+    coll_info[comp.id]['stats']['total'] = {'devices': 0, 'datapoints': 0}
+    coll_info[comp.id]['stats']['total']['devices'] = totalDevices
+    coll_info[comp.id]['stats']['total']['datapoints'] = totalDatapoints
+
+out.write("\n\n")
+out.write("Totals across all collectors\n")
+out.write("=============================================================================================================================================================\n")
+out.write("\n")
+totalDevices = 0
+totalDatapoints = 0
+for comp in coll_info:
+    totalDevices += coll_info[comp]['stats']['total']['devices']
+    totalDatapoints += coll_info[comp]['stats']['total']['datapoints']
+out.write("* Total:  Devices:  " + str(totalDevices))
+out.write(":  Datapoints:  " + str(totalDatapoints) + "\n")
 
 # Write collector information to json file
 jsonout.write(json.dumps(coll_info))
