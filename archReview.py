@@ -125,7 +125,7 @@ def processCpuInfo(cpuinfo):
                         cpulist[proc_num][fieldname] = final_value
                     if fieldname == 'cache size':
                         temp_value = int(value.strip('KB')) * 1024
-                        final_value = convToUnits(temp_value)
+                        final_value = convToUnits(temp_value, 1024, "B")
                         cpulist[proc_num][fieldname] = final_value
     cpusummary['sockets'] = len(cpusummary['socketlist'])
     del cpusummary['socketlist']
@@ -150,14 +150,14 @@ def processMemInfo(meminfo):
     memcheck = ['MemTotal', 'MemFree', 'SwapTotal', 'SwapFree']
     memlist = {}
     for memline in meminfo:
-        if memline.count(':'):
+        if memline.count(':') == 1:
             fieldname, value = memline.split(':')
             fieldname = fieldname.strip()
             fieldname = fieldname.strip('\t')
-        if memcheck.count(fieldname):
-            temp_value = int(value.strip('kB')) * 1024
-            final_value = convToUnits(temp_value)
-            memlist[fieldname] = final_value
+            if memcheck.count(fieldname):
+                temp_value = int(value.strip('kB')) * 1024
+                final_value = convToUnits(temp_value, 1024, "B")
+                memlist[fieldname] = final_value
     return memlist
 
 
@@ -172,11 +172,11 @@ def processMemcacheInfo(memcacheinfo):
         fieldname = fieldname.strip('\t')
         if fieldname == 'limit_maxbytes':
             temp_value = int(value)
-            final_value = convToUnits(temp_value)
+            final_value = convToUnits(temp_value, 1024, "B")
             memclist['Maximum Size'] = final_value
         if fieldname == 'bytes':
             temp_value = int(value)
-            final_value = convToUnits(temp_value)
+            final_value = convToUnits(temp_value, 1024, "B")
             memclist['Current Size'] = final_value
         if fieldname == 'curr_connections':
             final_value = int(value)
@@ -245,20 +245,6 @@ def executeRemoteCommand(cmd, remoteHost):
         print ex.message
 
 
-def getDeviceClassStats(collector):
-    # Need to fix - just copied over
-    deviceClassStats = []
-    totalDevices = 0
-    totalDatapoints = 0
-    for dclass in coll_info[coll.id]['stats']:
-        totalDevices += coll_info[coll.id]['stats'][dclass]['devices']
-        totalDatapoints += coll_info[coll.id]['stats'][dclass]['datapoints']
-        # out.write("  - " + dclass + ":  Devices:  "+ str(coll_info[coll.id]['stats'][dclass]['devices']))
-        # out.write(":  Datapoints:  " + str(coll_info[coll.id]['stats'][dclass]['datapoints']) + "\n")
-    # out.write("  - Total:  Devices:  "+ str(totalDevices))
-    # out.write(":  Datapoints:  " + str(totalDatapoints) + "\n")
-
-
 def componentGen(dmd, comp_type):
     if comp_type == 'HubConf':
         for component in dmd.Monitors.Hub.objectValues("HubConf"):
@@ -308,7 +294,7 @@ out.write("\n")
 
 # Get hostnames and IP addresses for master and print
 _LOOPBACKNAMES = set(('localhost', 'localhost.localdomain', '127.0.0.1'))
-_LOCALHOSTNAMES = _LOOPBACKNAMES.union(_discoverLocalhostNames())
+_LOCALHOSTNAMES = _LOOPBACKNAMES.union( x.lower() for x in _discoverLocalhostNames())
 master_hostname = list(_LOCALHOSTNAMES)
 out.write("* Hostnames and IP addresses for this host\n\n")
 master_hostname.sort()
@@ -330,7 +316,6 @@ try:
     master_info['cpuinfo'] = processCpuInfo(cpuinfo)
     for info in cpuInfoNames:
         if info in master_info['cpuinfo']:
-            fieldname = info
             value = master_info['cpuinfo'][info]
             out.write("  * " + info.title() + ":  " + str(value) + "\n")
 except Exception as ex:
@@ -339,20 +324,21 @@ except Exception as ex:
 try:
     master_info['cpuinfo']['stats'] = {}
     cpu_out = executeLocalCommand("mpstat -u 30 1")
-    master_info['cpuinfo']['stats']['average'] = {}
-    cpu_temp = cpu_out[3].split()
-    master_info['cpuinfo']['stats']['average']['user'] = cpu_temp[3]
-    master_info['cpuinfo']['stats']['average']['system'] = cpu_temp[5]
-    master_info['cpuinfo']['stats']['average']['idle'] = cpu_temp[11]
-    print master_info['cpuinfo']['stats']
-    out.write("  * Last 30s Performance:  User%:  " +
-               master_info['cpuinfo']['stats']['average']['user'] + 
-               "  System%:  " +
-               master_info['cpuinfo']['stats']['average']['system'] + 
-               "  Idle%:  " +
-                master_info['cpuinfo']['stats']['average']['idle'] + "\n")
+    while len(cpu_out) and not cpu_out[0].count('Average:'):
+        del cpu_out[0]
+    if cpu_out[0].count('Average:'):
+        cpu_temp = cpu_out[0].split()
+        master_info['cpuinfo']['stats']['average'] = {}
+        master_info['cpuinfo']['stats']['average']['user'] = cpu_temp[2]
+        master_info['cpuinfo']['stats']['average']['system'] = cpu_temp[4]
+        master_info['cpuinfo']['stats']['average']['idle'] = cpu_temp[10]
+        out.write("  * Last 30s Performance:  User%:  " +
+                  master_info['cpuinfo']['stats']['average']['user'] + 
+                  "  System%:  " +
+                  master_info['cpuinfo']['stats']['average']['system'] + 
+                  "  Idle%:  " +
+                  master_info['cpuinfo']['stats']['average']['idle'] + "\n")
 except Exception as ex:
-    print ex.message
     out.write("    Unable to retrieve information for this section: %s\n" % ex.message)
 out.write("\n\n")
 
@@ -363,7 +349,6 @@ try:
     master_info['meminfo'] = processMemInfo(meminfo)
     for info in memInfoNames:
         if info in master_info['meminfo']:
-            fieldname = info
             value = master_info['meminfo'][info]
             out.write("  * " + info + ":  " + str(value) + "\n")
 except Exception as ex:
@@ -375,6 +360,8 @@ out.write("* Filesystem Information - /opt/zenoss\n\n")
 try:
     master_info['diskstats'] = {}
     fstemp = executeLocalCommand("df -hT /opt/zenoss")
+    while not fstemp[0].count('Filesystem') and not fstemp[0].count('Use%'):
+        del fstemp[0]
     fstatstmp = [fstemp1.split() for fstemp1 in fstemp]
     fstats = [val for subl in fstatstmp for val in subl]
     del fstats[0:8]
@@ -437,7 +424,7 @@ try:
     master_info['database']['zodb'] = {}
     zep_db = ZenDB.ZenDB('zep', useAdmin=False)
     db_params = zep_db.dbparams
-    if master_hostname.count(db_params['host']):
+    if master_hostname.count(db_params['host'].lower()):
         out.write("* ZEP DB on Master\n\n\n")
         master_info['database']['zep']['host'] = 'master'
     else:
@@ -445,7 +432,7 @@ try:
         master_info['database']['zep']['host'] = db_params['host']
     zodb_db = ZenDB.ZenDB('zodb', useAdmin=False)
     db_params = zodb_db.dbparams
-    if master_hostname.count(db_params['host']):
+    if master_hostname.count(db_params['host'].lower()):
         out.write("* ZODB on Master\n\n\n")
         master_info['database']['zodb']['host'] = 'master'
     else:
@@ -457,8 +444,8 @@ try:
     for dbsize in dbsizes.splitlines():
         dbname, dbsizeval = dbsize.split('\t')
         dbsizeval = int(float(dbsizeval) * 1024 * 1024)
-        out.write("  * " + dbname + ":  " + convToUnits(dbsizeval) + "\n")
-        master_info['database']['sizes'][dbname] = convToUnits(dbsizeval)
+        out.write("  * " + dbname + ":  " + convToUnits(dbsizeval, 1000, "B") + "\n")
+        master_info['database']['sizes'][dbname] = convToUnits(dbsizeval, 1000, "B")
 except Exception as ex:
     out.write("    Unable to retrieve information for this section: %s\n" % ex.message)
 out.write("\n\n")
@@ -522,8 +509,8 @@ for comp in componentGen(dmd, "HubConf"):
     out.write(hub_info[comp.id]['config']['name'] + " running on host: " + hub_info[comp.id]['config']['hostname'] + "\n")
     out.write("=============================================================================================================================================================\n")
     # If hub is not running on the master, try to get physical and os stats
-    if not master_hostname.count(hub_info[comp.id]['config']['hostname']):
-#    if master_hostname.count(hub_info[comp.id]['config']['hostname']):
+    if not master_hostname.count(hub_info[comp.id]['config']['hostname'].lower()):
+#    if master_hostname.count(hub_info[comp.id]['config']['hostname'].lower()):
         # Try to get cpu information from hub
         out.write("* CPU Information\n\n")
         try:
@@ -537,10 +524,29 @@ for comp in componentGen(dmd, "HubConf"):
             hub_info[comp.id]['cpuinfo'] = processCpuInfo(cpuinfo)
             for info in cpuInfoNames:
                 if info in hub_info[comp.id]['cpuinfo']:
-                    fieldname = info
                     value = hub_info[comp.id]['cpuinfo'][info]
                     out.write("  * " + info.title() + ":  " + str(value) + "\n")
         except Exception as ex:
+            out.write("    Unable to retrieve information for this section: %s\n" % ex.message)
+        try:
+            hub_info[comp.id]['cpuinfo']['stats'] = {}
+            cpu_out = executeRemoteCommand("mpstat -u 30 1", comp)
+            while len(cpu_out) and not cpu_out[0].count('Average:'):
+                del cpu_out[0]
+            if cpu_out[0].count('Average:'):
+                hub_info[comp.id]['cpuinfo']['stats']['average'] = {}
+                cpu_temp = cpu_out[0].split()
+                hub_info[comp.id]['cpuinfo']['stats']['average']['user'] = cpu_temp[2]
+                hub_info[comp.id]['cpuinfo']['stats']['average']['system'] = cpu_temp[4]
+                hub_info[comp.id]['cpuinfo']['stats']['average']['idle'] = cpu_temp[10]
+                out.write("  * Last 30s Performance:  User%:  " +
+                          hub_info[comp.id]['cpuinfo']['stats']['average']['user'] + 
+                          "  System%:  " +
+                          hub_info[comp.id]['cpuinfo']['stats']['average']['system'] + 
+                          "  Idle%:  " +
+                          hub_info[comp.id]['cpuinfo']['stats']['average']['idle'] + "\n")
+        except Exception as ex:
+            print ex.message
             out.write("    Unable to retrieve information for this section: %s\n" % ex.message)
         out.write("\n\n")
 
@@ -551,7 +557,6 @@ for comp in componentGen(dmd, "HubConf"):
             hub_info[comp.id]['meminfo'] = processMemInfo(meminfo)
             for info in memInfoNames:
                 if info in hub_info[comp.id]['meminfo']:
-                    fieldname = info
                     value = hub_info[comp.id]['meminfo'][info]
                     out.write("  * " + info + ":  " + str(value) + "\n")
         except Exception as ex:
@@ -563,6 +568,8 @@ for comp in componentGen(dmd, "HubConf"):
         try:
             hub_info[comp.id]['diskstats'] = {}
             fstemp = executeRemoteCommand("df -hT /opt/zenoss", comp)
+            while not fstemp[0].count('Filesystem') and not fstemp[0].count('Use%'):
+                del fstemp[0]
             fstatstmp = [fstemp1.split() for fstemp1 in fstemp]
             fstats = [val for subl in fstatstmp for val in subl]
             del fstats[0:8]
@@ -643,8 +650,8 @@ for comp in componentGen(dmd, "PerformanceConf"):
     out.write("=============================================================================================================================================================\n")
     out.write("\n")
     # If collector is not running on the master, try to get physical and os stats
-    if not master_hostname.count(coll_info[comp.id]['config']['hostname']):
-#    if master_hostname.count(coll_info[comp.id]['config']['hostname']):
+    if not master_hostname.count(coll_info[comp.id]['config']['hostname'].lower()):
+#    if master_hostname.count(coll_info[comp.id]['config']['hostname'].lower()):
         # Try to get cpu information from collector
         out.write("* CPU Information\n\n")
         try:
@@ -658,10 +665,30 @@ for comp in componentGen(dmd, "PerformanceConf"):
             coll_info[comp.id]['cpuinfo'] = processCpuInfo(cpuinfo)
             for info in cpuInfoNames:
                 if info in coll_info[comp.id]['cpuinfo']:
-                    fieldname = info
                     value = coll_info[comp.id]['cpuinfo'][info]
                     out.write("  * " + info.title() + ":  " + str(value) + "\n")
         except Exception as ex:
+            out.write("    Unable to retrieve information for this section: %s\n" % ex.message)
+        try:
+            coll_info[comp.id]['cpuinfo']['stats'] = {}
+            cpu_out = executeRemoteCommand("mpstat -u 30 1", comp)
+            while len(cpu_out) and not cpu_out[0].count('Average:'):
+                del cpu_out[0]
+            if cpu_out[0].count('Average:'):
+                coll_info[comp.id]['cpuinfo']['stats']['average'] = {}
+                cpu_temp = cpu_out[0].split()
+                coll_info[comp.id]['cpuinfo']['stats']['average']['user'] = cpu_temp[2]
+                coll_info[comp.id]['cpuinfo']['stats']['average']['system'] = cpu_temp[4]
+                coll_info[comp.id]['cpuinfo']['stats']['average']['idle'] = cpu_temp[10]
+                print coll_info[comp.id]['cpuinfo']['stats']
+                out.write("  * Last 30s Performance:  User%:  " +
+                          coll_info[comp.id]['cpuinfo']['stats']['average']['user'] + 
+                          "  System%:  " +
+                          coll_info[comp.id]['cpuinfo']['stats']['average']['system'] + 
+                          "  Idle%:  " +
+                          coll_info[comp.id]['cpuinfo']['stats']['average']['idle'] + "\n")
+        except Exception as ex:
+            print ex.message
             out.write("    Unable to retrieve information for this section: %s\n" % ex.message)
         out.write("\n\n")
 
@@ -672,7 +699,6 @@ for comp in componentGen(dmd, "PerformanceConf"):
             coll_info[comp.id]['meminfo'] = processMemInfo(meminfo)
             for info in memInfoNames:
                 if info in coll_info[comp.id]['meminfo']:
-                    fieldname = info
                     value = coll_info[comp.id]['meminfo'][info]
                     out.write("  * " + info + ":  " + str(value) + "\n")
         except Exception as ex:
@@ -684,6 +710,8 @@ for comp in componentGen(dmd, "PerformanceConf"):
         try:
             coll_info[comp.id]['diskstats'] = {}
             fstemp = executeRemoteCommand("df -hT /opt/zenoss/perf", comp)
+            while not fstemp[0].count('Filesystem') and not fstemp[0].count('Use%'):
+                del fstemp[0]
             fstatstmp = [fstemp1.split() for fstemp1 in fstemp]
             fstats = [val for subl in fstatstmp for val in subl]
             del fstats[0:8]
