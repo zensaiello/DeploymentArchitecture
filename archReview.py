@@ -266,6 +266,26 @@ def collectorGen(dmd):
         yield hub
 
 
+def parseCpuPerfInfo(cpu_out):
+    for cpu_perf_line in cpu_out:
+        if cpu_perf_line.count('CPU') and not cpu_perf_line.count('CPU)'):
+            cpu_temp = cpu_perf_line.split()
+            if cpu_temp.count('%user'):
+                cpu_user_indx = cpu_temp.index('%user') - 1
+            elif cpu_temp.count('%usr'):
+                cpu_user_indx = cpu_temp.index('%usr') - 1
+            cpu_system_indx = cpu_temp.index('%sys') - 1
+            cpu_idle_indx = cpu_temp.index('%idle') - 1
+            if not (cpu_user_indx and cpu_system_indx and cpu_idle_indx):
+                raise RuntimeError('Can not parse data\n' + cpu_out)
+        if cpu_perf_line.count('Average:'):
+            cpu_temp = cpu_perf_line.split()
+            cpu_perf_info = {}
+            cpu_perf_info['user'] = cpu_temp[cpu_user_indx]
+            cpu_perf_info['system'] = cpu_temp[cpu_system_indx]
+            cpu_perf_info['idle'] = cpu_temp[cpu_idle_indx]
+    return cpu_perf_info
+
 # Main part of program
 
 # Produce output in reStructured Text
@@ -333,21 +353,14 @@ except Exception as ex:
 
 try:
     master_info['cpuinfo']['stats'] = {}
-    cpu_out = executeLocalCommand("mpstat -u 30 1")
-    while len(cpu_out) and not cpu_out[0].count('Average:'):
-        del cpu_out[0]
-    if cpu_out[0].count('Average:'):
-        cpu_temp = cpu_out[0].split()
-        master_info['cpuinfo']['stats']['average'] = {}
-        master_info['cpuinfo']['stats']['average']['user'] = cpu_temp[2]
-        master_info['cpuinfo']['stats']['average']['system'] = cpu_temp[4]
-        master_info['cpuinfo']['stats']['average']['idle'] = cpu_temp[10]
-        out.write("  * Last 30s Performance:  User%:  " +
-                  master_info['cpuinfo']['stats']['average']['user'] + 
-                  "  System%:  " +
-                  master_info['cpuinfo']['stats']['average']['system'] + 
-                  "  Idle%:  " +
-                  master_info['cpuinfo']['stats']['average']['idle'] + "\n")
+    cpu_out = executeLocalCommand("mpstat 30 1")
+    master_info['cpuinfo']['stats']['average'] = parseCpuPerfInfo(cpu_out)
+    out.write("  * Last 30s Performance:  User%:  " +
+              master_info['cpuinfo']['stats']['average']['user'] + 
+              "  System%:  " +
+              master_info['cpuinfo']['stats']['average']['system'] + 
+              "  Idle%:  " +
+              master_info['cpuinfo']['stats']['average']['idle'] + "\n")
 except Exception as ex:
     out.write("    Unable to retrieve information for this section: %s\n" % ex.message)
 out.write("\n\n")
@@ -540,21 +553,14 @@ for comp in componentGen(dmd, "HubConf"):
             out.write("    Unable to retrieve information for this section: %s\n" % ex.message)
         try:
             hub_info[comp.id]['cpuinfo']['stats'] = {}
-            cpu_out = executeRemoteCommand("mpstat -u 30 1", comp)
-            while len(cpu_out) and not cpu_out[0].count('Average:'):
-                del cpu_out[0]
-            if cpu_out[0].count('Average:'):
-                hub_info[comp.id]['cpuinfo']['stats']['average'] = {}
-                cpu_temp = cpu_out[0].split()
-                hub_info[comp.id]['cpuinfo']['stats']['average']['user'] = cpu_temp[2]
-                hub_info[comp.id]['cpuinfo']['stats']['average']['system'] = cpu_temp[4]
-                hub_info[comp.id]['cpuinfo']['stats']['average']['idle'] = cpu_temp[10]
-                out.write("  * Last 30s Performance:  User%:  " +
-                          hub_info[comp.id]['cpuinfo']['stats']['average']['user'] + 
-                          "  System%:  " +
-                          hub_info[comp.id]['cpuinfo']['stats']['average']['system'] + 
-                          "  Idle%:  " +
-                          hub_info[comp.id]['cpuinfo']['stats']['average']['idle'] + "\n")
+            cpu_out = executeRemoteCommand("mpstat 30 1", comp)
+            hub_info[comp.id]['cpuinfo']['stats']['average'] = parseCpuPerfInfo(cpu_out)
+            out.write("  * Last 30s Performance:  User%:  " +
+                      hub_info[comp.id]['cpuinfo']['stats']['average']['user'] + 
+                      "  System%:  " +
+                      hub_info[comp.id]['cpuinfo']['stats']['average']['system'] + 
+                      "  Idle%:  " +
+                      hub_info[comp.id]['cpuinfo']['stats']['average']['idle'] + "\n")
         except Exception as ex:
             print ex.message
             out.write("    Unable to retrieve information for this section: %s\n" % ex.message)
@@ -681,22 +687,14 @@ for comp in componentGen(dmd, "PerformanceConf"):
             out.write("    Unable to retrieve information for this section: %s\n" % ex.message)
         try:
             coll_info[comp.id]['cpuinfo']['stats'] = {}
-            cpu_out = executeRemoteCommand("mpstat -u 30 1", comp)
-            while len(cpu_out) and not cpu_out[0].count('Average:'):
-                del cpu_out[0]
-            if cpu_out[0].count('Average:'):
-                coll_info[comp.id]['cpuinfo']['stats']['average'] = {}
-                cpu_temp = cpu_out[0].split()
-                coll_info[comp.id]['cpuinfo']['stats']['average']['user'] = cpu_temp[2]
-                coll_info[comp.id]['cpuinfo']['stats']['average']['system'] = cpu_temp[4]
-                coll_info[comp.id]['cpuinfo']['stats']['average']['idle'] = cpu_temp[10]
-                print coll_info[comp.id]['cpuinfo']['stats']
-                out.write("  * Last 30s Performance:  User%:  " +
-                          coll_info[comp.id]['cpuinfo']['stats']['average']['user'] + 
-                          "  System%:  " +
-                          coll_info[comp.id]['cpuinfo']['stats']['average']['system'] + 
-                          "  Idle%:  " +
-                          coll_info[comp.id]['cpuinfo']['stats']['average']['idle'] + "\n")
+            cpu_out = executeRemoteCommand("mpstat 30 1", comp)
+            coll_info[comp.id]['cpuinfo']['stats']['average'] = parseCpuPerfInfo(cpu_out)
+            out.write("  * Last 30s Performance:  User%:  " +
+                      coll_info[comp.id]['cpuinfo']['stats']['average']['user'] + 
+                      "  System%:  " +
+                      coll_info[comp.id]['cpuinfo']['stats']['average']['system'] + 
+                      "  Idle%:  " +
+                      coll_info[comp.id]['cpuinfo']['stats']['average']['idle'] + "\n")
         except Exception as ex:
             print ex.message
             out.write("    Unable to retrieve information for this section: %s\n" % ex.message)
