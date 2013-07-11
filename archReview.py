@@ -292,18 +292,28 @@ out.write("Host information\n")
 out.write("=============================================================================================================================================================\n")
 out.write("\n")
 
+# Create data structure for master information
+master_info = {}
+
 # Get hostnames and IP addresses for master and print
 _LOOPBACKNAMES = set(('localhost', 'localhost.localdomain', '127.0.0.1'))
 _LOCALHOSTNAMES = _LOOPBACKNAMES.union( x.lower() for x in _discoverLocalhostNames())
 master_hostname = list(_LOCALHOSTNAMES)
 out.write("* Hostnames and IP addresses for this host\n\n")
 master_hostname.sort()
+master_info['hostnames'] = []
 for hname in master_hostname:
     out.write("  * " + hname + "\n")
+    master_info['hostnames'].append(hname)
+out.write("\n\n")
+
+# Get server key for master and print
+out.write("* Server Key\n\n")
+master_info['serverkey'] = dmd.uuid
+out.write("  * " + master_info['serverkey'] + "\n")
 out.write("\n\n")
 
 # Try to get cpu information from master
-master_info = {}
 out.write("* CPU Information\n\n")
 try:
     cpuinfo = executeLocalCommand("cat /proc/cpuinfo")
@@ -765,7 +775,10 @@ for comp in componentGen(dmd, "PerformanceConf"):
         if not dc in coll_info[comp.id]['stats']:
             coll_info[comp.id]['stats'][dc] = {'devices': 0, 'datapoints': 0}
         components = d.getMonitoredComponents()
-        datapoints = sum([component.getRRDDataPoints() for component in components], []) + d.getRRDDataPoints()
+        try: 
+            datapoints = sum([component.getRRDDataPoints() for component in components], []) + d.getRRDDataPoints()
+        except Exception as ex:
+            d.getRRDDataPoints()
         coll_info[comp.id]['stats'][dc]['devices'] += 1
         coll_info[comp.id]['stats'][dc]['datapoints'] += len(datapoints)
     out.write("\n\n")
