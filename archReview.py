@@ -5,6 +5,7 @@
 
 
 # Copyright 2013, Zenoss, Inc. and Michael Shannon
+print "Zenoss Architecture Review Script"
 
 # Imports
 #  Standard Python
@@ -43,7 +44,7 @@ memcachedNames = ['Maximum Size', 'Current Size', 'Current Connections', 'Evicti
 p = optparse.OptionParser()
 #  File to write output to - example "/tmp/ZenossArchReport"
 p.add_option("-f", "--file", action="store", dest="outfile")
-p.set_defaults(outfile="/tmp/ZenossArchReport.txt")
+p.set_defaults(outfile="/tmp/ZenossArchReport")
 #  Customer - example "Zenoss, Inc."
 p.add_option("-c", "--customer", action="store", dest="cust_name")
 p.set_defaults(cust_name="Enterprise Customer")
@@ -59,14 +60,13 @@ args = None
 out = open(outfile + ".txt", "w")
 jsonout = open(outfile + ".json", "w")
 
-
 # Connect to DMD
 print "Trying to connect to DMD"
 zenscript = ZenScriptBase(connect=True, noopts=1)
 dmd = None
 try:
     dmd = zenscript.dmd
-    print "Connected to DMD"
+    print "Connected to DMD.  Zenoss version found: %s" % dmd.version
 except Exception, e:
     print "Connection to zenoss dmd failed: %s\n" % e
     sys.exit(1)
@@ -818,5 +818,6 @@ archive = tarfile.open(outfile + ".tgz", "w|gz")
 archive.add(out.name)
 archive.add(jsonout.name)
 archive.close()
+print 'Output saved to:\n\t' + outfile + '.tgz'
 os.remove(out.name)
 os.remove(jsonout.name)
