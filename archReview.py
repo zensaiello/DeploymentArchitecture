@@ -770,6 +770,10 @@ for comp in componentGen(dmd, "PerformanceConf"):
     for d in comp.devices():
         d = d.primaryAq()
         dc = d.deviceClass().primaryAq().getPrimaryId()[10:]
+        if not dc:
+            fixscript = 'for dev in dmd.Devices.getSubDevices():\n   if dev.deviceClass == None:\n      devclass = dev.getPrimaryParent().getPrimaryParent()\n      print "Re-Linking %s to %s" % (dev.id, devclass)\n      dev.deviceClass._add(devclass)\n      commit()'
+            print 'There are broken relationships. Please run the following script in zendmd to fix them and re-run the script: \n %s' % fixscript
+            sys.exit()
         if not dc in coll_info[comp.id]['stats']:
             coll_info[comp.id]['stats'][dc] = {'devices': 0, 'datapoints': 0}
         components = d.getMonitoredComponents()
