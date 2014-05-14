@@ -16,6 +16,7 @@ import os
 import re
 import tarfile
 import json
+from glob import glob
 #  Zenoss specific
 import Globals
 import sys
@@ -56,7 +57,7 @@ outfile = opts.outfile
 cust_name = opts.cust_name
 title_text = opts.title_text
 args = None
-# Open file to write results to - should eventually figure out how to do a .tgz file, so I can add files to the archive
+# Open file to write results
 out = open(outfile + ".txt", "w")
 jsonout = open(outfile + ".json", "w")
 
@@ -71,8 +72,7 @@ except Exception, e:
     print "Connection to zenoss dmd failed: %s\n" % e
     sys.exit(1)
 
-
-# Functions for later use
+    
 def _discoverLocalhostNames():
     names = set()
     # check the many variants of hostname
@@ -87,7 +87,7 @@ def _discoverLocalhostNames():
             names.add(vals)
     return names
 
-
+    
 def processCpuInfo(cpuinfo):
     cpucheck = ['processor', 'model name', 'cpu MHz', 'cache size']
     cpulist = {}
@@ -145,7 +145,6 @@ def processCpuInfo(cpuinfo):
         cpusummary['virtualization platform'] = 'Unable to detect'
     return cpusummary
 
-
 def processMemInfo(meminfo):
     memcheck = ['MemTotal', 'MemFree', 'SwapTotal', 'SwapFree']
     memlist = {}
@@ -160,6 +159,9 @@ def processMemInfo(meminfo):
                 memlist[fieldname] = final_value
     return memlist
 
+def roundMemValue(memValue):
+    memValue = str(int(round(float(memValue.strip('GB'))))) + 'GB'
+    return memValue 
 
 def processMemcacheInfo(memcacheinfo):
     memccheck = ['limit_maxbytes', 'bytes', 'curr_connections', 'evictions']
@@ -508,6 +510,46 @@ try:
 except Exception as ex:
     out.write("    Unable to retrieve information for this section: %s\n" % ex.message)
 out.write("\n\n")
+
+out.write("Zenoss configuration information\n")
+out.write("=============================================================================================================================================================\n")
+out.write("\n")
+master_info['configuration'] = {}
+
+# Try to get the number of zopes configured on the master 
+#  (We don't have any good way to detect off-box zopes)
+out.write("* Configured Zope Instances\n")
+out.write("\n")
+try:
+    zopecount = 0
+    for filename in glob('/opt/zenoss/etc/zope/zope*.conf'):
+        zopecount += 1
+    out.write("  * " + str(zopecount) + " Zope instances\n")
+    master_info['configuration']['zopeinstances'] = zopecount
+except Exception as ex:
+    out.write("    Unable to retrieve information for this section: %s\n" % ex.message)
+out.write("\n\n")
+
+
+# Try to get the number of zeneventd
+#  (This will not currently detect zeneventd running off-box)
+out.write("* ZenEventd Worker Configuration\n")
+out.write("\n")
+try:
+    zenconfig = GlobalConfig.ConfigLoader('/opt/zenoss/etc/zeneventd.conf')
+    zenconfig.load()
+    if zenconfig._config.has_key('workers'):
+        workers = zenconfig._config.get('workers')
+    else:
+        workers = 2
+    out.write("  * " + str(workers) + " ZenEventd workers\n")
+    master_info['configuration']['zeneventd'] = {}
+    master_info['configuration']['zeneventd']['workers'] = workers
+except Exception as ex:
+    out.write("    Unable to retrieve information for this section: %s\n" % ex.message)
+out.write("\n\n")
+
+
 # Write Master information to json file
 jsonout.write(json.dumps(master_info))
 jsonout.write("\n\n")
@@ -526,8 +568,8 @@ for comp in componentGen(dmd, "HubConf"):
     hub_info[comp.id] = {}
     hub_info[comp.id]['config'] = {}
     hub_info[comp.id]['collectors'] = {}
-    hub_info[comp.id]['config']['hostname'] = comp.hostname
     hub_info[comp.id]['config']['name'] = comp.id
+    hub_info[comp.id]['config']['hostname'] = comp.hostname
     out.write("\n\n")
     out.write(hub_info[comp.id]['config']['name'] + " running on host: " + hub_info[comp.id]['config']['hostname'] + "\n")
     out.write("=============================================================================================================================================================\n")
@@ -632,6 +674,34 @@ for comp in componentGen(dmd, "HubConf"):
                 hub_info[comp.id]['config']['daemons'][dname] = {}
                 hub_info[comp.id]['config']['daemons'][dname]['running'] = 'Not Running'
                 out.write("  * " + dname + ":  " + "Not Running" + "\n")
+    out.write("\n\n")
+    # Try to get the number of hub workers and invalidation workers per hub
+    out.write("* Hub Worker Configuration\n")
+    out.write("\n")
+    try:
+        if comp.id == 'localhost':
+            filename = '/opt/zenoss/etc/zenhub.conf'
+        else:
+            filename = '/opt/zenoss/etc/' + comp.id + '_zenhub.conf'
+            if not os.path.exists(filename):
+                filename = '/opt/zenoss/etc/zenhub.conf'
+        zenconfig = GlobalConfig.ConfigLoader(filename)
+        zenconfig.load()
+        if zenconfig._config.has_key('workers'):
+            workers = zenconfig._config.get('workers')
+        else:
+            workers = 2
+        if zenconfig._config.has_key('invalidationworkers'):
+            iworkers = zenconfig._config.get('invalidationworkers')
+        else:
+            iworkers = 1
+        out.write("  * " + str(workers) + " Zenhub workers\n")
+        out.write("  * " + str(iworkers) + " Zenhub invalidation workers\n")
+        # hub_info[comp.id]['config'] = {}
+        hub_info[comp.id]['config']['zenhubworkers'] = workers
+        hub_info[comp.id]['config']['zenhubiworkers'] = iworkers
+    except Exception as ex:
+        out.write("    Unable to retrieve information for this section: %s\n" % ex.message)
     out.write("\n\n")
     # Get configured collectors for all hubs
     out.write("* Collectors (on this hub)\n\n")
@@ -809,19 +879,99 @@ for comp in coll_info:
     totalDatapoints += coll_info[comp]['stats']['total']['datapoints']
 out.write("* Total:  Devices:  " + str(totalDevices))
 out.write(":  Datapoints:  " + str(totalDatapoints) + "\n")
-
+coll_info['totals'] = {}
+coll_info['totals']['stats'] = {}
+coll_info['totals']['stats']['total'] = {'devices': 0, 'datapoints': 0}
+coll_info['totals']['stats']['total']['devices'] = totalDevices
+coll_info['totals']['stats']['total']['datapoints'] = totalDatapoints
+    
 # Write collector information to json file
 jsonout.write(json.dumps(coll_info))
 jsonout.write("\n\n")
 
+# Create summary page
+outsummary = open(outfile + ".sum.txt", "w")
+# Get title from arguments, print at top of page
+outsummary.write("=============================================================================================================================================================\n")
+outsummary.write(title_text.title() + "\n")
+outsummary.write("=============================================================================================================================================================\n")
+outsummary.write("\n")
+
+# Print Customer Name, current date/time as subtitle
+outsummary.write(cust_name + "\n")
+outsummary.write("-----------------------------------------------------------------------------------\n")
+outsummary.write("\n")
+
+
+# Section title - Summary information
+outsummary.write("Summary Information\n")
+outsummary.write("-----------------------------------------------------------------------------------\n")
+outsummary.write("\n")
+
+outsummary.write("* Master\n")
+outsummary.write("  * " + master_info['hostnames'][len(master_info['hostnames']) - 1] + "\n")
+if master_info['versions'].has_key('zenoss_version'):
+    outsummary.write("  * " + str(master_info['versions']['zenoss_version']) + "\n")
+if master_info['cpuinfo']['hyperthreadcores'].isdigit() > 0:
+    outsummary.write("  * " + str(master_info['cpuinfo']['hyperthreadcores']) + " cores\n")
+else:
+    outsummary.write("  * " + str(master_info['cpuinfo']['sockets'] * master_info['cpuinfo']['cores']) + " cores\n")
+outsummary.write("  * " + str(roundMemValue(master_info['meminfo']['MemTotal'])) + " memory\n")
+outsummary.write("  * " + str(coll_info['totals']['stats']['total']['devices']) + " total devices\n")
+outsummary.write("  * " + str(coll_info['totals']['stats']['total']['datapoints']) + " total datapoints\n")
+outsummary.write("\n\n")
+
+outsummary.write("* Hubs\n")
+for hub in hub_info:
+    if not master_hostname.count(hub_info[hub]['config']['hostname'].lower()):
+        msg = " running on " + hub_info[hub]['config']['hostname']
+    else:
+        msg = " running on Master"
+    outsummary.write("  * " + hub_info[hub]['config']['name'] + msg + "\n\n")
+    if hub_info[hub].has_key('cpuinfo'):
+        if hub_info[hub]['cpuinfo'].has_key('hyperthreadcores') and hub_info[hub]['cpuinfo']['hyperthreadcores'].isdigit() > 0:
+            outsummary.write("   * " + str(hub_info[hub]['cpuinfo']['hyperthreadcores']) + " cores\n")
+        elif hub_info[hub]['cpuinfo'].has_key('sockets'):
+            outsummary.write("   * " + str(hub_info[hub]['cpuinfo']['sockets'] * hub_info[hub]['cpuinfo']['cores']) + " cores\n")
+        else:
+            outsummary.write("   * " + str(hub_info[hub]['cpuinfo']['cores']) + " cores\n")
+        outsummary.write("   * " + str(roundMemValue(hub_info[hub]['meminfo']['MemTotal'])) + " memory\n")
+    outsummary.write("   * " + str(hub_info[hub]['config']['zenhubworkers']) + " workers\n")
+    outsummary.write("   * " + str(hub_info[hub]['config']['zenhubiworkers']) + " invalidation workers\n")
+    outsummary.write("\n\n")
+
+        
+outsummary.write("* Collectors\n")
+for coll in coll_info:
+    if coll != 'totals':
+        if not master_hostname.count(coll_info[coll]['config']['hostname'].lower()):
+            msg = " running on " + coll_info[coll]['config']['hostname']
+        else:
+            msg = " running on Master"
+        outsummary.write("  * " + coll_info[coll]['config']['name'] + msg + "\n\n")
+        if coll_info[coll].has_key('cpuinfo'):
+            if coll_info[coll]['cpuinfo'].has_key('hyperthreadcores') and coll_info[coll]['cpuinfo']['hyperthreadcores'].isdigit() > 0:
+                outsummary.write("   * " + str(coll_info[coll]['cpuinfo']['hyperthreadcores']) + " cores\n")
+            elif coll_info[coll]['cpuinfo'].has_key('sockets'):
+                outsummary.write("   * " + str(coll_info[coll]['cpuinfo']['sockets'] * coll_info[coll]['cpuinfo']['cores']) + " cores\n")
+            else:
+                outsummary.write("   * " + str(coll_info[coll]['cpuinfo']['cores']) + " cores\n")
+            outsummary.write("   * " + str(roundMemValue(coll_info[coll]['meminfo']['MemTotal'])) + " memory\n")
+        outsummary.write("   * " + str(coll_info[coll]['stats']['total']['devices']) + " total devices\n")
+        outsummary.write("   * " + str(coll_info[coll]['stats']['total']['datapoints']) + " total datapoints\n")
+        outsummary.write("\n\n")
+
+        
 # Finished retrieving information; combine files in archive and delete original files.
 out.close()
 jsonout.close()
 
 archive = tarfile.open(outfile + ".tgz", "w|gz")
-archive.add(out.name)
-archive.add(jsonout.name)
+archive.add(out.name, out.name.split('/').pop(), False)
+archive.add(jsonout.name, jsonout.name.split('/').pop(), False)
+archive.add(outsummary.name, outsummary.name.split('/').pop(), False)
 archive.close()
 print 'Output saved to:\n\t' + outfile + '.tgz'
 os.remove(out.name)
 os.remove(jsonout.name)
+os.remove(outsummary.name)
