@@ -935,7 +935,7 @@ outsummary.write("* Master\n\n")
 outsummary.write("  * Master running on " + list(_discoverLocalhostNames())[0] + "\n\n")
 if master_info['versions'].has_key('zenoss_version'):
     outsummary.write("   * " + str(master_info['versions']['zenoss_version']) + "\n")
-if master_info['cpuinfo']['hyperthreadcores'].isdigit() > 0:
+if str(master_info['cpuinfo']['hyperthreadcores']).isdigit() > 0:
     outsummary.write("   * " + str(master_info['cpuinfo']['hyperthreadcores']) + " core(s)\n")
 else:
     outsummary.write("   * " + str(master_info['cpuinfo']['sockets'] * master_info['cpuinfo']['cores']) + " core(s)\n")
@@ -962,7 +962,7 @@ for hub in hub_info:
         msg = " running on Master"
     outsummary.write("  * " + hub_info[hub]['config']['name'] + msg + "\n\n")
     if hub_info[hub].has_key('cpuinfo'):
-        if hub_info[hub]['cpuinfo'].has_key('hyperthreadcores') and hub_info[hub]['cpuinfo']['hyperthreadcores'].isdigit() > 0:
+        if hub_info[hub]['cpuinfo'].has_key('hyperthreadcores') and str(hub_info[hub]['cpuinfo']['hyperthreadcores']).isdigit() > 0:
             outsummary.write("   * " + str(hub_info[hub]['cpuinfo']['hyperthreadcores']) + " core(s)\n")
         elif hub_info[hub]['cpuinfo'].has_key('sockets'):
             outsummary.write("   * " + str(hub_info[hub]['cpuinfo']['sockets'] * hub_info[hub]['cpuinfo']['cores']) + " core(s)\n")
@@ -984,7 +984,7 @@ for coll in coll_info:
             msg = " running on Master"
         outsummary.write("  * " + coll_info[coll]['config']['name'] + msg + "\n\n")
         if coll_info[coll].has_key('cpuinfo'):
-            if coll_info[coll]['cpuinfo'].has_key('hyperthreadcores') and coll_info[coll]['cpuinfo']['hyperthreadcores'].isdigit() > 0:
+            if coll_info[coll]['cpuinfo'].has_key('hyperthreadcores') and str(coll_info[coll]['cpuinfo']['hyperthreadcores']).isdigit() > 0:
                 outsummary.write("   * " + str(coll_info[coll]['cpuinfo']['hyperthreadcores']) + " core(s)\n")
             elif coll_info[coll]['cpuinfo'].has_key('sockets'):
                 outsummary.write("   * " + str(coll_info[coll]['cpuinfo']['sockets'] * coll_info[coll]['cpuinfo']['cores']) + " core(s)\n")
