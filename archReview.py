@@ -935,10 +935,12 @@ outsummary.write("* Master\n\n")
 outsummary.write("  * Master running on " + list(_discoverLocalhostNames())[0] + "\n\n")
 if master_info['versions'].has_key('zenoss_version'):
     outsummary.write("   * " + str(master_info['versions']['zenoss_version']) + "\n")
-if str(master_info['cpuinfo']['hyperthreadcores']).isdigit() > 0:
+if master_info['cpuinfo'].has_key('hyperthreadcores') and str(master_info['cpuinfo']['hyperthreadcores']).isdigit() > 0:
     outsummary.write("   * " + str(master_info['cpuinfo']['hyperthreadcores']) + " core(s)\n")
-else:
+elif master_info['cpuinfo'].has_key('sockets'):
     outsummary.write("   * " + str(master_info['cpuinfo']['sockets'] * master_info['cpuinfo']['cores']) + " core(s)\n")
+else:
+    outsummary.write("   * " + str(master_info['cpuinfo']['cores']) + " core(s)\n")
 outsummary.write("   * " + str(roundMemValue(master_info['meminfo']['MemTotal'])) + " memory\n")
 outsummary.write("   * " + str(master_info['configuration']['zopeinstances']) + " Zope instances\n")
 zevtdworkers = 0
