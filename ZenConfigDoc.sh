@@ -106,6 +106,22 @@ def parsePerfData(resp_data):
         metrics[metricName] = metricValue
     return metrics
 
+def _getMetrics(opener, headers, cchost, timedur=24, agg='max', data=None):
+    url = urlunparse(('https', cchost, '/metrics/api/performance/query/', '', '', ''))
+    req = urllib2.Request(url, headers=headers, data=data)
+    try:
+        resp = opener.open(req)
+        resp_data = loads(resp.read())
+        metrics = parsePerfData(resp_data)
+        return metrics
+    except urllib2.URLError as e:
+        if hasattr(e, 'reason'):
+            print 'We failed to reach a server.'
+            print 'Reason: ', e.reason
+        elif hasattr(e, 'code'):
+            print "The server couldn\'t fulfill the request."
+            print 'Error code: ', e.code
+
 def getHostStats(opener, headers, cchost, hostid, timedur=24, agg='max'):
     hostJson = '{' \
         '"start":"' + str(timedur + 1) + 'h-ago",' \
@@ -167,21 +183,7 @@ def getHostStats(opener, headers, cchost, hostid, timedur=24, agg='max'):
             '"aggregator":"sum","name":"Memory - Major Page Faults"}' \
         ']' \
     '}' 
-    url = urlunparse(('https', cchost, '/metrics/api/performance/query/', '', '', ''))
-    req = urllib2.Request(url, headers=headers, data=hostJson)
-    try:
-        resp = opener.open(req)
-        resp_data = loads(resp.read())
-        metrics = parsePerfData(resp_data)
-        return metrics
-    except urllib2.URLError as e:
-        if hasattr(e, 'reason'):
-            print 'We failed to reach a server.'
-            print 'Reason: ', e.reason
-        elif hasattr(e, 'code'):
-            print "The server couldn\'t fulfill the request."
-            print 'Error code: ', e.code
-    pass
+    return _getMetrics(opener, headers, cchost, timedur=timedur, agg=agg, data=hostJson)
     
 def getServiceStats(opener, headers, cchost, svcid, timedur=24, agg='max'):
     svcJson = '{' \
@@ -210,21 +212,42 @@ def getServiceStats(opener, headers, cchost, svcid, timedur=24, agg='max'):
             '"aggregator":"sum","name":"Memory - Cache"}' \
         ']' \
     '}' 
-    url = urlunparse(('https', cchost, '/metrics/api/performance/query/', '', '', ''))
-    req = urllib2.Request(url, headers=headers, data=svcJson)
-    try:
-        resp = opener.open(req)
-        resp_data = loads(resp.read())
-        metrics = parsePerfData(resp_data)
-        return metrics
-    except urllib2.URLError as e:
-        if hasattr(e, 'reason'):
-            print 'We failed to reach a server.'
-            print 'Reason: ', e.reason
-        elif hasattr(e, 'code'):
-            print "The server couldn\'t fulfill the request."
-            print 'Error code: ', e.code
+    return _getMetrics(opener, headers, cchost, timedur=timedur, agg=agg, data=svcJson)
 
+def getCollectorSvcStats(opener, headers, cchost, svcid, timedur=24, agg='max'):
+    collSvcJson = '{' \
+        '"start":"' + str(timedur) + 'h-ago",' \
+        '"end":"now",' \
+        '"series":true,' \
+        '"downsample":"'+str(timedur)+ 'h-' + str(agg)+'",' \
+        '"tags":{"controlplane_service_id":["' + str(svcid) + '"]},' \
+        '"returnset":"EXACT",' \
+        '"metrics":[{' \
+            '"metric":"queuedTasks",' \
+            '"rate":false,' \
+            '"aggregator":"sum",' \
+            '"name":"Tasks - Queued"},' \
+            '{"metric":"runningTasks",' \
+            '"rate":false,' \
+            '"aggregator":"sum",' \
+            '"name":"Tasks - Running"},' \
+            '{"metric":"missedRuns",' \
+            '"rate":true,' \
+            '"rateOptions":{"counter":true,"counterMax":null,"resetThreshold":1},' \
+            '"aggregator":"sum",' \
+            '"name":"Runs - Missed"},' \
+            '{"metric":"dataPoints",' \
+            '"rate":true,' \
+            '"rateOptions":{"counter":true,"counterMax":null,"resetThreshold":1},' \
+            '"aggregator":"sum",' \
+            '"name":"Datapoint Rate"},' \
+            '{"metric":"devices",' \
+            '"rate":false,' \
+            '"aggregator":"sum","name":"Device Count"}' \
+        ']' \
+    '}' 
+    return _getMetrics(opener, headers, cchost, timedur=timedur, agg=agg, data=collSvcJson)
+    
 
 #  Need to accept a couple of arguments
 #  Path to write output to - example "/tmp"
@@ -297,6 +320,8 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
     pools = getObjectData(opener, headers, cchost, object)
     for pool in pools:
         deployments['pools'][pool] = {}
+        deployments['pools'][pool]['services'] = {}
+        deployments['pools'][pool]['hosts'] = {}
         deployments['pools'][pool]['ID'] = pools[pool]['ID']
         deployments['pools'][pool]['Description'] = pools[pool]['Description']
         deployments['pools'][pool]['CoreCapacity'] = pools[pool]['CoreCapacity']
@@ -327,6 +352,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
     defaultHostAlias = getObjectData(opener, headers, cchost, 'hosts/defaultHostAlias')['hostalias']
     print "Getting services information"
     services = getObjectData(opener, headers, cchost, 'services')
+    collectorFromPool = {}
     for service in services:
         if service['Startup'] and service['Startup'] != 'N/A':
             pool = service['PoolID']
@@ -349,6 +375,10 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
             deployments['pools'][pool]['services'][servicename]['Description'] = service['Description']
             deployments['pools'][pool]['services'][servicename]['CPUCommitment'] = service['CPUCommitment']
             deployments['pools'][pool]['services'][servicename]['Startup'] = service['Startup']
+            if service['Tags'] and 'collector' in service['Tags']:
+                deployments['pools'][pool]['services'][servicename]['CollectorDaemon'] = True
+            else:
+                deployments['pools'][pool]['services'][servicename]['CollectorDaemon'] = False
             configFiles = service['ConfigFiles']
             origConfigFiles = service['OriginalConfigs']
             if configFiles:
@@ -367,12 +397,25 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                         if 'configs' not in deployments['pools'][pool]['services'][servicename]:
                             deployments['pools'][pool]['services'][servicename]['configs'] = {}
                         deployments['pools'][pool]['services'][servicename]['configs'][configName] = changedConfig
+        # elif collectorFromPool and 'Tags' in service and service['Tags'] and 'collector' in service['Tags'] and service['PoolID'] not in collectorFromPool:
+        elif 'Tags' in service and service['Tags'] and 'collector' in service['Tags'] and service['PoolID'] not in collectorFromPool:
+            collectorFromPool[service['PoolID']] = service['Name']
+            print "Found collector %s for pool %s" % (service['Name'], service['PoolID'])
+        else:
+            pass
         print "Getting historical performance information for service %s" % servicename
         deployments['pools'][pool]['services'][servicename]['historicalPerf'] = {}
         svcStats = getServiceStats(opener, headers, cchost, service['ID'], agg='max', timedur=24)
         deployments['pools'][pool]['services'][servicename]['historicalPerf']['max'] = svcStats
         svcStats = getServiceStats(opener, headers, cchost, service['ID'], agg='avg', timedur=24)
         deployments['pools'][pool]['services'][servicename]['historicalPerf']['avg'] = svcStats
+        if 'Tags' in service and service['Tags'] and 'collector' in service['Tags']:
+            print "Getting collector performance information for service %s" % servicename
+            deployments['pools'][pool]['services'][servicename]['CollectorPerf'] = {}
+            svcStats = getCollectorSvcStats(opener, headers, cchost, service['ID'], agg='max', timedur=24)
+            deployments['pools'][pool]['services'][servicename]['CollectorPerf']['max'] = svcStats
+            svcStats = getCollectorSvcStats(opener, headers, cchost, service['ID'], agg='avg', timedur=24)
+            deployments['pools'][pool]['services'][servicename]['CollectorPerf']['avg'] = svcStats
         if service.get('Endpoints'):
             for endpoint in service['Endpoints']:
                 if endpoint['Purpose'] == 'export':
@@ -440,6 +483,11 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                         deployments['pools'][pool]['services'][servicename]['AddressAssignments'][name]['IP'] = ip
                         deployments['pools'][pool]['services'][servicename]['AddressAssignments'][name]['Port'] = port
                         deployments['pools'][pool]['services'][servicename]['AddressAssignments'][name]['Host'] = hostname
+    for pool in deployments['pools']:
+        for service in deployments['pools'][pool]['services']:
+            if deployments['pools'][pool]['services'][service]['CollectorDaemon']:
+                deployments['pools'][pool]['services'][service]['CollectorName'] = collectorFromPool.get(pool)
+                deployments['pools'][pool]['CollectorName'] = collectorFromPool.get(pool)
     print "Creating temporary files:"
     print "%s.json" % outfile
     print "%s.rst" % outfile
@@ -656,9 +704,9 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                         txtout.write('    %s' % '\n    '.join(serviceinfo['configs'][config]))
                         txtout.write('  \n')
                 txtout.write('\n|\n\n')
-                metrics = serviceinfo['historicalPerf']['max'].keys()
-                metrics.sort()
                 if len([val for val in serviceinfo['historicalPerf']['avg'].values() if val != 'N/A']):
+                    metrics = serviceinfo['historicalPerf']['max'].keys()
+                    metrics.sort()
                     txtout.write('============================== ========== ==========\n')
                     txtout.write('Metric Over Last 24H           Average    Maximum   \n')
                     #txtout.write('------------------------- ---------------------\n')
@@ -679,17 +727,38 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                         # txtout.write('-------------------- ---------- ----------\n')
                     txtout.write('============================== ========== ==========\n')
                 txtout.write('\n______\n\n|\n\n')
+                if 'CollectorPerf' in serviceinfo and len([val for val in serviceinfo['CollectorPerf']['avg'].values() if val != 'N/A']):
+                    metrics = serviceinfo['CollectorPerf']['max'].keys()
+                    metrics.sort()
+                    txtout.write('============================== ========== ==========\n')
+                    txtout.write('Metric Over Last 24H           Average    Maximum   \n')
+                    #txtout.write('------------------------- ---------------------\n')
+                    txtout.write('============================== ========== ==========\n')
+                    for metric in metrics:
+                        avgValue = serviceinfo['CollectorPerf']['avg'][metric]
+                        maxValue = serviceinfo['CollectorPerf']['max'][metric]
+                        if maxValue != 'N/A':
+                            if metric.startswith('Datapoint'):
+                                avgValue = '%s/s' % str(round(avgValue, 3))
+                                maxValue = '%s/s' % str(round(maxValue, 3))
+                            else:
+                                avgValue = '%s' % str(round(avgValue, 1))
+                                maxValue = '%s' % str(round(maxValue, 1))
+                            txtout.write('%s %s %s\n' % (metric.ljust(30), avgValue.ljust(10), maxValue))
+                        # txtout.write('-------------------- ---------- ----------\n')
+                    txtout.write('============================== ========== ==========\n')
+                txtout.write('\n______\n\n|\n\n')
         txtout.write('\n')
             
     
     txtout.close()
-    # archive = tarfile.open(outfile + ".tgz", "w|gz")
-    # archive.add(txtout.name, out.name.split('/').pop(), False)
-    # archive.add(jsonout.name, jsonout.name.split('/').pop(), False)
-    # archive.close()
-    # print 'Output saved to:\n\t' + outfile + '.tgz'
-    # os.remove(txtout.name)
-    # os.remove(jsonout.name)
+    archive = tarfile.open(outfile + ".tgz", "w|gz")
+    archive.add(txtout.name, txtout.name.split('/').pop(), False)
+    archive.add(jsonout.name, jsonout.name.split('/').pop(), False)
+    archive.close()
+    print 'Output saved to:\n\t' + outfile + '.tgz'
+    os.remove(txtout.name)
+    os.remove(jsonout.name)
 
 else:
     print "Couldn't log in"
