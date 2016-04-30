@@ -239,6 +239,7 @@ def getServiceStats(opener, headers, cchost, svcid, timedur=24, agg='max'):
         ']' \
     '}' 
     return _getMetrics(opener, headers, cchost, timedur=timedur, agg=agg, data=svcJson)
+<<<<<<< HEAD
 
 def getCollectorSvcStats(opener, headers, cchost, svcid, timedur=24, agg='max'):
     collSvcJson = '{' \
@@ -289,7 +290,43 @@ def _getRMData(opener, headers, rmhost, router, data):
         elif hasattr(e, 'code'):
             print "The server couldn\'t fulfill the request."
             print 'Error code: ', e.code
+=======
+>>>>>>> aae794c0eaaa3090a5a1bc2f900d8cba7e94d92d
 
+def getCollectorSvcStats(opener, headers, cchost, svcid, timedur=24, agg='max'):
+    collSvcJson = '{' \
+        '"start":"' + str(timedur) + 'h-ago",' \
+        '"end":"now",' \
+        '"series":true,' \
+        '"downsample":"'+str(timedur)+ 'h-' + str(agg)+'",' \
+        '"tags":{"controlplane_service_id":["' + str(svcid) + '"]},' \
+        '"returnset":"EXACT",' \
+        '"metrics":[{' \
+            '"metric":"queuedTasks",' \
+            '"rate":false,' \
+            '"aggregator":"sum",' \
+            '"name":"Tasks - Queued"},' \
+            '{"metric":"runningTasks",' \
+            '"rate":false,' \
+            '"aggregator":"sum",' \
+            '"name":"Tasks - Running"},' \
+            '{"metric":"missedRuns",' \
+            '"rate":true,' \
+            '"rateOptions":{"counter":true,"counterMax":null,"resetThreshold":1},' \
+            '"aggregator":"sum",' \
+            '"name":"Runs - Missed"},' \
+            '{"metric":"dataPoints",' \
+            '"rate":true,' \
+            '"rateOptions":{"counter":true,"counterMax":null,"resetThreshold":1},' \
+            '"aggregator":"sum",' \
+            '"name":"Datapoint Rate"},' \
+            '{"metric":"devices",' \
+            '"rate":false,' \
+            '"aggregator":"sum","name":"Device Count"}' \
+        ']' \
+    '}' 
+    return _getMetrics(opener, headers, cchost, timedur=timedur, agg=agg, data=collSvcJson)
+    
 
 def getRMDeviceComponentCount(opener, headers, rmhost, device):
     data = '{'\
@@ -638,6 +675,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
             if deployments['pools'][pool]['services'][service]['CollectorDaemon']:
                 deployments['pools'][pool]['services'][service]['CollectorName'] = collectorFromPool.get(pool)
                 deployments['pools'][pool]['CollectorName'] = collectorFromPool.get(pool)
+<<<<<<< HEAD
 
     _cj.clear()
     if loginToRM(opener, headers, rmhost, rmuser, rmpass):
@@ -646,6 +684,8 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
         deployments['RM'] = getRMStats(opener, headers, rmhost, collectors)
     else:
         print "Unable to log in to RM"
+=======
+>>>>>>> aae794c0eaaa3090a5a1bc2f900d8cba7e94d92d
     print "Creating temporary files:"
     print "%s.json" % outfile
     print "%s.rst" % outfile
