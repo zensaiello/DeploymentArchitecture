@@ -239,7 +239,6 @@ def getServiceStats(opener, headers, cchost, svcid, timedur=24, agg='max'):
         ']' \
     '}' 
     return _getMetrics(opener, headers, cchost, timedur=timedur, agg=agg, data=svcJson)
-<<<<<<< HEAD
 
 def getCollectorSvcStats(opener, headers, cchost, svcid, timedur=24, agg='max'):
     collSvcJson = '{' \
@@ -290,8 +289,6 @@ def _getRMData(opener, headers, rmhost, router, data):
         elif hasattr(e, 'code'):
             print "The server couldn\'t fulfill the request."
             print 'Error code: ', e.code
-=======
->>>>>>> aae794c0eaaa3090a5a1bc2f900d8cba7e94d92d
 
 def getCollectorSvcStats(opener, headers, cchost, svcid, timedur=24, agg='max'):
     collSvcJson = '{' \
@@ -675,8 +672,6 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
             if deployments['pools'][pool]['services'][service]['CollectorDaemon']:
                 deployments['pools'][pool]['services'][service]['CollectorName'] = collectorFromPool.get(pool)
                 deployments['pools'][pool]['CollectorName'] = collectorFromPool.get(pool)
-<<<<<<< HEAD
-
     _cj.clear()
     if loginToRM(opener, headers, rmhost, rmuser, rmpass):
         print "Successfully logged in to RM"
@@ -684,8 +679,6 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
         deployments['RM'] = getRMStats(opener, headers, rmhost, collectors)
     else:
         print "Unable to log in to RM"
-=======
->>>>>>> aae794c0eaaa3090a5a1bc2f900d8cba7e94d92d
     print "Creating temporary files:"
     print "%s.json" % outfile
     print "%s.rst" % outfile
@@ -956,36 +949,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                 else:
                     txtout.write('**No metrics for last 24 hours**\n')
                 txtout.write('\n______\n\n|\n\n')
-<<<<<<< HEAD
         txtout.write('\n\n')
-=======
-<<<<<<< HEAD
-        txtout.write('\n\n')
-=======
-                if 'CollectorPerf' in serviceinfo and len([val for val in serviceinfo['CollectorPerf']['avg'].values() if val != 'N/A']):
-                    metrics = serviceinfo['CollectorPerf']['max'].keys()
-                    metrics.sort()
-                    txtout.write('============================== ========== ==========\n')
-                    txtout.write('Metric Over Last 24H           Average    Maximum   \n')
-                    #txtout.write('------------------------- ---------------------\n')
-                    txtout.write('============================== ========== ==========\n')
-                    for metric in metrics:
-                        avgValue = serviceinfo['CollectorPerf']['avg'][metric]
-                        maxValue = serviceinfo['CollectorPerf']['max'][metric]
-                        if maxValue != 'N/A':
-                            if metric.startswith('Datapoint'):
-                                avgValue = '%s/s' % str(round(avgValue, 3))
-                                maxValue = '%s/s' % str(round(maxValue, 3))
-                            else:
-                                avgValue = '%s' % str(round(avgValue, 1))
-                                maxValue = '%s' % str(round(maxValue, 1))
-                            txtout.write('%s %s %s\n' % (metric.ljust(30), avgValue.ljust(10), maxValue))
-                        # txtout.write('-------------------- ---------- ----------\n')
-                    txtout.write('============================== ========== ==========\n')
-                txtout.write('\n______\n\n|\n\n')
-        txtout.write('\n')
->>>>>>> aae794c0eaaa3090a5a1bc2f900d8cba7e94d92d
->>>>>>> 00043199c9f6488aab89b759712931b47632f297
             
     if 'RM' in deployments:
         rminfo = deployments['RM']
