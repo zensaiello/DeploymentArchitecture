@@ -324,7 +324,6 @@ def getCollectorSvcStats(opener, headers, cchost, svcid, timedur=24, agg='max'):
     '}' 
     return _getMetrics(opener, headers, cchost, timedur=timedur, agg=agg, data=collSvcJson)
     
-
 def getRMDeviceComponentCount(opener, headers, rmhost, device):
     data = '{'\
 	'"action": "DeviceRouter",'\
@@ -383,7 +382,6 @@ def getRMDevicesByCollector(opener, headers, rmhost, collector):
     if resp_data and resp_data['result'] and resp_data['result']['devices']:
         devices = resp_data['result']['devices']
         for device in devices:
-            print "Processing device %s" % device
             components = getRMDeviceComponentCount(opener, headers, rmhost, device['uid'])
             dc = device['deviceClass']['uid']
             data_bin = re.match(regcombined, dc)
@@ -399,7 +397,7 @@ def getRMDevicesByCollector(opener, headers, rmhost, collector):
                 results[bin_name]['devices'] += 1
             if components:
                 for component in components:
-                    if component not in results[bin_name]:
+                    if component not in results[bin_name]['components']:
                         results[bin_name]['components'][component] = 0
                     results[bin_name]['components'][component] += components[component]
     return results
@@ -409,7 +407,8 @@ def getRMStats(opener, headers, rmhost, collectors):
     returnData = {}
     returnData['collectors'] = {}
     for collector in collectors:
-        returnData['collectors'] = {}
+        # returnData['collectors'][collector] = {}
+        print 'Getting RM data for collector %s' % collector
         returnData['collectors'][collector] = getRMDevicesByCollector(opener, headers, rmhost, collector)
     return returnData
 
@@ -466,6 +465,9 @@ deployments = {}
 deployments['pools'] = {}
 deployments['services'] = {}
 linewidth = 80
+daemonsWithoutMetrics = ('zminion', 'collectorredis', 
+                         'MetricShipper', 'zenjmx', 
+                         'zenjserver', 'zenucsevents',)
 
 # username = 'zenny'
 # username = 'root'
@@ -581,18 +583,18 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                         if 'configs' not in deployments['pools'][pool]['services'][servicename]:
                             deployments['pools'][pool]['services'][servicename]['configs'] = {}
                         deployments['pools'][pool]['services'][servicename]['configs'][configName] = changedConfig
+            print "Getting historical performance information for service %s" % servicename
+            deployments['pools'][pool]['services'][servicename]['historicalPerf'] = {}
+            svcStats = getServiceStats(opener, headers, cchost, service['ID'], agg='max', timedur=24)
+            deployments['pools'][pool]['services'][servicename]['historicalPerf']['max'] = svcStats
+            svcStats = getServiceStats(opener, headers, cchost, service['ID'], agg='avg', timedur=24)
+            deployments['pools'][pool]['services'][servicename]['historicalPerf']['avg'] = svcStats
         # elif collectorFromPool and 'Tags' in service and service['Tags'] and 'collector' in service['Tags'] and service['PoolID'] not in collectorFromPool:
         elif 'Tags' in service and service['Tags'] and 'collector' in service['Tags'] and service['PoolID'] not in collectorFromPool:
             collectorFromPool[service['PoolID']] = service['Name']
             print "Found collector %s for pool %s" % (service['Name'], service['PoolID'])
         else:
             pass
-        print "Getting historical performance information for service %s" % servicename
-        deployments['pools'][pool]['services'][servicename]['historicalPerf'] = {}
-        svcStats = getServiceStats(opener, headers, cchost, service['ID'], agg='max', timedur=24)
-        deployments['pools'][pool]['services'][servicename]['historicalPerf']['max'] = svcStats
-        svcStats = getServiceStats(opener, headers, cchost, service['ID'], agg='avg', timedur=24)
-        deployments['pools'][pool]['services'][servicename]['historicalPerf']['avg'] = svcStats
         if 'Tags' in service and service['Tags'] and 'collector' in service['Tags']:
             print "Getting collector performance information for service %s" % servicename
             deployments['pools'][pool]['services'][servicename]['CollectorPerf'] = {}
@@ -676,6 +678,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
     if loginToRM(opener, headers, rmhost, rmuser, rmpass):
         print "Successfully logged in to RM"
         collectors = collectorFromPool.values()
+        import pdb; pdb.set_trace()
         deployments['RM'] = getRMStats(opener, headers, rmhost, collectors)
     else:
         print "Unable to log in to RM"
@@ -946,9 +949,12 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                             txtout.write('%s %s %s\n' % (metric.ljust(30), avgValue.ljust(10), maxValue))
                         # txtout.write('-------------------- ---------- ----------\n')
                     txtout.write('============================== ========== ==========\n')
-                else:
+                    txtout.write('\n______\n\n|\n\n')
+                elif 'CollectorPerf' in serviceinfo and service not in daemonsWithoutMetrics:
                     txtout.write('**No metrics for last 24 hours**\n')
-                txtout.write('\n______\n\n|\n\n')
+                    txtout.write('\n______\n\n|\n\n')
+                else:
+                    pass
         txtout.write('\n\n')
             
     if 'RM' in deployments:
@@ -958,6 +964,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
         txtout.write('\n'.rjust(linewidth, '-'))
         txtout.write('|\n\n')
         for collector in rminfo['collectors']:
+            import pdb; pdb.set_trace()
             devtotal = 0
             txtout.write('Information for Collector: %s\n' % collector)
             txtout.write('\n'.rjust(linewidth, '+'))
@@ -974,32 +981,47 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                 devclassinfo = collectorinfo[devclass]
                 txtout.write('| ')
                 txtout.write(str(devclassname).ljust(19))
+                txtout.write('| ')
                 devices = devclassinfo['devices']
                 devtotal += devices
-                txtout.write(str(devices).rjust(10))
+                txtout.write(str(devices).rjust(9))
                 txtout.write('| ')
-                # txtout.write('\n')
-                # if not devclassinfo['components']:
                 txtout.write(' '.rjust(29))
                 txtout.write('| ')
                 txtout.write(' '.rjust(10))
                 txtout.write('| ')
                 txtout.write('\n')
-                for component in devclassinfo['components']:
+                # import pdb; pdb.set_trace()
+                if devclassinfo['components']:
+                    for component in devclassinfo['components']:
+                        txtout.write('| ')
+                        txtout.write(' '.rjust(19))
+                        txtout.write('| ')
+                        txtout.write(' '.rjust(9))
+                        txtout.write('| ')
+                        txtout.write(str(component).ljust(29))
+                        txtout.write('| ')
+                        componentcount = devclassinfo['components'][component]
+                        txtout.write(str(componentcount).rjust(10))
+                        txtout.write('|')
+                        txtout.write('\n')
+                        txtout.write('+--------------------+----------+------------------------------+-----------+\n')
+                else:
                     txtout.write('| ')
                     txtout.write(' '.rjust(19))
                     txtout.write('| ')
-                    txtout.write(' '.rjust(10))
-                    txtout.write(str(component).ljust(29))
+                    txtout.write(' '.rjust(9))
                     txtout.write('| ')
-                    componentcount = devclassinfo['components'][component]
-                    txtout.write(str(componentcount).rjust(11))
+                    txtout.write('None'.ljust(29))
+                    txtout.write('| ')
+                    txtout.write(str('N/A').rjust(10))
                     txtout.write('|')
                     txtout.write('\n')
-                txtout.write('+--------------------+----------+------------------------------+-----------+\n')
+                    txtout.write('+--------------------+----------+------------------------------+-----------+\n')
                 #txtout.write('+====================+==========+==============================+==========+\n')
             #txtout.write('**Total**            %s\n' % str(devtotal).rjust(10))
             #txtout.write('+====================+==========+==============================+==========+\n')
+            txtout.write('\n\n')
 
     txtout.close()
     archive = tarfile.open(outfile + ".tgz", "w|gz")
