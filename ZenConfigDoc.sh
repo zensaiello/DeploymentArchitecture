@@ -82,7 +82,6 @@ def getAuthCookie(opener, headers, data, host, loginPage):
 
 def loginToRM(opener, headers, host, username, password):
     camefrom = urlunparse(('https', host, '/zport/dmd', '', '', ''))
-    # instance = 'https://%s/zport/dmd' % host
     rmcreds = urllib.urlencode(dict(__ac_name = username, 
                                     __ac_password = password, 
                                     submitted = 'true', 
@@ -362,6 +361,7 @@ def getRMDevicesByCollector(opener, headers, rmhost, collector):
 	'"action": "DeviceRouter",'\
 	'"method": "getDevices",'\
 	'"data": [{'\
+    '"limit": 0, '\
     '"params": {'\
     '"collector": "'+ collector +'"'\
     '},'\
@@ -381,25 +381,28 @@ def getRMDevicesByCollector(opener, headers, rmhost, collector):
     resp_data = _getRMData(opener, headers, rmhost, router, data)
     if resp_data and resp_data['result'] and resp_data['result']['devices']:
         devices = resp_data['result']['devices']
+        if len(devices) != resp_data['result']['totalCount']:
+            raise Exception('Could not retrieve all devices')
         for device in devices:
-            components = getRMDeviceComponentCount(opener, headers, rmhost, device['uid'])
-            dc = device['deviceClass']['uid']
-            data_bin = re.match(regcombined, dc)
-            if not data_bin:
-                bin_name = 'Other'
-            else:
-                bin_name = data_bin.group()
-            if bin_name not in results:
-                results[bin_name] = {}
-                results[bin_name]['components'] = {}
-                results[bin_name]['devices'] = 1
-            else:
-                results[bin_name]['devices'] += 1
-            if components:
-                for component in components:
-                    if component not in results[bin_name]['components']:
-                        results[bin_name]['components'][component] = 0
-                    results[bin_name]['components'][component] += components[component]
+            if device['productionState'] != -1:
+                dc = device['deviceClass']['uid']
+                data_bin = re.match(regcombined, dc)
+                if not data_bin:
+                    bin_name = 'Other'
+                else:
+                    bin_name = data_bin.group()
+                if bin_name not in results:
+                    results[bin_name] = {}
+                    results[bin_name]['components'] = {}
+                    results[bin_name]['devices'] = 1
+                else:
+                    results[bin_name]['devices'] += 1
+                components = getRMDeviceComponentCount(opener, headers, rmhost, device['uid'])
+                if components:
+                    for component in components:
+                        if component not in results[bin_name]['components']:
+                            results[bin_name]['components'][component] = 0
+                        results[bin_name]['components'][component] += components[component]
     return results
 
 def getRMStats(opener, headers, rmhost, collectors):
@@ -452,12 +455,9 @@ environ = args.environment
 cust_name = args.customer
 outfile = outpath + '/' + str(cust_name) + '.' + str(environ) + '.' + str(time())
 
-# cchost = 'ms-europa1.zenoss.loc'
-# cchost = '10.88.111.100'
 cchost = args.cchost
 top_level_url = urlunparse(('https', cchost, '', '', '', ''))
 _cj = CookieJar()
-# confMatch = re.compile('^\s*[^#|^\n].*$', re.MULTILINE)
 confMatch2 = re.compile('^\+ (.*)')
 
 differ = Differ()
@@ -469,19 +469,12 @@ daemonsWithoutMetrics = ('zminion', 'collectorredis',
                          'MetricShipper', 'zenjmx', 
                          'zenjserver', 'zenucsevents',)
 
-# username = 'zenny'
-# username = 'root'
-# password = 'Z3n0ss'
-# password = 'zenoss'
 username = args.username
 password = args.password
 _creds = {"username": username, "password": password}
 creds = dumps(_creds)
 headers = {"Content-Type": "application/json"}
 
-# rmhost = 'zenoss5.ms-europa1.zenoss.loc'
-# rmuser = 'mshannon'
-# rmpass = 'zenoss'
 rmhost = args.rmhost
 rmuser = args.rmuser
 rmpass = args.rmpass
@@ -571,11 +564,6 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                 for config in configFiles:
                     configName = config.split('/')[-1]
                     configFile = configFiles[config]['Content'].splitlines()
-                        # confLines = confMatch.findall(configFile)
-                        # if len(confLines):
-                            # if 'configs' not in deployments['pools'][pool]['services'][servicename]:
-                                # deployments['pools'][pool]['services'][servicename]['configs'] = {}
-                            # deployments['pools'][pool]['services'][servicename]['configs'][configName] = confLines
                     origConfigFile = origConfigFiles[config]['Content'].splitlines()
                     diffText = differ.compare(origConfigFile, configFile)
                     changedConfig = [confMatch2.match(diffLine).group(1) for diffLine in diffText if confMatch2.match(diffLine) is not None]
@@ -589,7 +577,6 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
             deployments['pools'][pool]['services'][servicename]['historicalPerf']['max'] = svcStats
             svcStats = getServiceStats(opener, headers, cchost, service['ID'], agg='avg', timedur=24)
             deployments['pools'][pool]['services'][servicename]['historicalPerf']['avg'] = svcStats
-        # elif collectorFromPool and 'Tags' in service and service['Tags'] and 'collector' in service['Tags'] and service['PoolID'] not in collectorFromPool:
         elif 'Tags' in service and service['Tags'] and 'collector' in service['Tags'] and service['PoolID'] not in collectorFromPool:
             collectorFromPool[service['PoolID']] = service['Name']
             print "Found collector %s for pool %s" % (service['Name'], service['PoolID'])
@@ -678,7 +665,6 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
     if loginToRM(opener, headers, rmhost, rmuser, rmpass):
         print "Successfully logged in to RM"
         collectors = collectorFromPool.values()
-        import pdb; pdb.set_trace()
         deployments['RM'] = getRMStats(opener, headers, rmhost, collectors)
     else:
         print "Unable to log in to RM"
@@ -689,7 +675,6 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
     jsonout = open(outfile + '.json', "w")
     txtout = open(outfile + '.rst', "w")
     jsonout.write(dumps(deployments))
-    # pprint(deployments)
     jsonout.close()
     txtout.write('\n'.rjust(linewidth, '='))
     txtout.write('Architecture Document\n')
@@ -731,11 +716,6 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                 hostinfo = deployments['pools'][pool]['hosts'][host]
                 cores = hostinfo['Cores']
                 memory = convToUnits(hostinfo['Memory'])
-                # txtout.write(':Host: %s\n' % host)
-                # txtout.write('\n')
-                # txtout.write('  :Cores: %s\n' % cores)
-                # txtout.write('  :Memory: %s\n' % memory)
-                # txtout.write('\n')
                 txtout.write(str(host).ljust(46))
                 txtout.write(str(cores).rjust(6))
                 txtout.write(str(memory).rjust(8))
@@ -754,15 +734,11 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
             for service in services:
                 serviceinfo = deployments['pools'][pool]['services'][service]
                 ramcommit = serviceinfo['RAMCommitment']
-                # txtout.write(':Service: %s\n' % service)
-                #txtout.write('\n')
                 txtout.write(str(service).ljust(26))
                 if ramcommit:
-                    #txtout.write('  :RAM Commitment: %s\n' % ramcommit)
                     txtout.write('%sB\n' % ramcommit)
                 else:
                     txtout.write('N/A\n')
-                # txtout.write('------------------------- ---------------\n')
             txtout.write('========================= ===============\n')
             txtout.write('\n______\n\n|\n\n')
     txtout.write('\n\n')
@@ -863,7 +839,6 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                         else:
                             pass
                         txtout.write('%s %s %s\n' % (metric.ljust(30), avgValue.ljust(10), maxValue))
-                    # txtout.write('-------------------- ---------- ----------\n')
                 txtout.write('============================== ========== ==========\n')
                 txtout.write('\n______\n\n|\n\n')
         txtout.write('\n')
@@ -902,7 +877,6 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                 if 'configs' in serviceinfo:
                     for config in serviceinfo['configs']:
                         txtout.write('\n|\n\n  Changed lines in config file %s::\n\n' % config)
-                        # txtout.write('    ')
                         txtout.write('    %s' % '\n    '.join(serviceinfo['configs'][config]))
                         txtout.write('  \n')
                 txtout.write('\n|\n\n')
@@ -926,7 +900,6 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                             else:
                                 pass
                             txtout.write('%s %s %s\n' % (metric.ljust(30), avgValue.ljust(10), maxValue))
-                        # txtout.write('-------------------- ---------- ----------\n')
                     txtout.write('============================== ========== ==========\n')
                     txtout.write('\n______\n\n|\n\n')
                 if 'CollectorPerf' in serviceinfo and len([val for val in serviceinfo['CollectorPerf']['avg'].values() if val != 'N/A']):
@@ -934,7 +907,6 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                     metrics.sort()
                     txtout.write('============================== ========== ==========\n')
                     txtout.write('Metric Over Last 24H           Average    Maximum   \n')
-                    #txtout.write('------------------------- ---------------------\n')
                     txtout.write('============================== ========== ==========\n')
                     for metric in metrics:
                         avgValue = serviceinfo['CollectorPerf']['avg'][metric]
@@ -947,7 +919,6 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                                 avgValue = '%s' % str(round(avgValue, 1))
                                 maxValue = '%s' % str(round(maxValue, 1))
                             txtout.write('%s %s %s\n' % (metric.ljust(30), avgValue.ljust(10), maxValue))
-                        # txtout.write('-------------------- ---------- ----------\n')
                     txtout.write('============================== ========== ==========\n')
                     txtout.write('\n______\n\n|\n\n')
                 elif 'CollectorPerf' in serviceinfo and service not in daemonsWithoutMetrics:
@@ -964,7 +935,6 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
         txtout.write('\n'.rjust(linewidth, '-'))
         txtout.write('|\n\n')
         for collector in rminfo['collectors']:
-            import pdb; pdb.set_trace()
             devtotal = 0
             txtout.write('Information for Collector: %s\n' % collector)
             txtout.write('\n'.rjust(linewidth, '+'))
@@ -991,7 +961,6 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                 txtout.write(' '.rjust(10))
                 txtout.write('| ')
                 txtout.write('\n')
-                # import pdb; pdb.set_trace()
                 if devclassinfo['components']:
                     for component in devclassinfo['components']:
                         txtout.write('| ')
