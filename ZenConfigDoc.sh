@@ -191,12 +191,15 @@ def getHostStats(opener, headers, cchost, hostid, timedur=24, agg='max'):
             '{"metric":"storage.total",' \
             '"rate":false,' \
             '"aggregator":"sum","name":"DFS Storage - Total"},' \
-            '{"metric":"storage.free",' \
+            '{"metric":"storage.used",' \
             '"rate":false,' \
-            '"aggregator":"sum","name":"DFS Storage - Free"},' \
+            '"aggregator":"sum","name":"DFS Storage - Used"},' \
             '{"metric":"load.avg1m",' \
             '"rate":false,' \
             '"aggregator":"sum","name":"Load Average - 1m"},' \
+            '{"metric":"memory.total",' \
+            '"rate":false,' \
+            '"aggregator":"sum","name":"Memory - Total"},' \
             '{"metric":"memory.actualused",' \
             '"rate":false,' \
             '"aggregator":"sum","name":"Memory - Used"},' \
@@ -828,8 +831,8 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                             avgValue = convToUnits(avgValue)
                             maxValue = convToUnits(maxValue)
                         elif metric.startswith('DFS') and maxValue != 'N/A':
-                            avgValue = convToUnits(avgValue * 1024)
-                            maxValue = convToUnits(maxValue * 1024)
+                            avgValue = convToUnits(avgValue)
+                            maxValue = convToUnits(maxValue)
                         elif metric.startswith('Load Average'):
                             avgValue = str(round(avgValue, 2))
                             maxValue = str(round(maxValue, 2))
