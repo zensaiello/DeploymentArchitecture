@@ -450,7 +450,10 @@ p.add_argument("-R", "--RMhost", action="store", dest="rmhost", required=True, h
 p.add_argument("-U", "--RMuser", action="store", dest="rmuser", required=True, help="username with access to RM")
 #  Password for RM - example "zenoss"
 p.add_argument("-P", "--RMpass", action="store", dest="rmpass", required=True, help="password for RM")
-
+#  Ignore certificates
+p.add_argument("-I", "--ignore_certs", action="store_true", dest="ignore_certs", required=False, help="ignore ssl certificates when connecting" ) 
+#  Debug-level http logging
+p.add_argument("-d", "--http_debug", action="store_true", dest="http_debug", required=False, help="turn on debug logging of http" ) 
 
 args = p.parse_args()
 outpath = args.outputpath
@@ -485,9 +488,20 @@ _rmcreds = {"username": rmuser, "password": rmpass}
 rmcreds = dumps(_rmcreds)
 
 # opener = urllib2.build_opener(urllib2.HTTPSHandler(debuglevel=1), urllib2.HTTPCookieProcessor(_cj))
-opener = urllib2.build_opener(urllib2.HTTPSHandler(), urllib2.HTTPCookieProcessor(_cj))
-# if debug:
-    # opener.add_handler(urllib2.HTTPHandler(debuglevel=1))
+# opener = urllib2.build_opener(urllib2.HTTPSHandler(), urllib2.HTTPCookieProcessor(_cj))
+
+
+ignore_certs = args.ignore_certs
+http_debug = args.http_debug
+
+handler_args = {}
+if ignore_certs:
+    import ssl
+    handler_args.update(dict(context=ssl._create_unverified_context()))
+if http_debug:
+    handler_args.update(dict(debuglevel=1))
+
+opener = urllib2.build_opener(urllib2.HTTPSHandler(**handler_args), urllib2.HTTPCookieProcessor(_cj))
 
 # Install the opener.
 # Now all calls to urllib2.urlopen use our opener.
