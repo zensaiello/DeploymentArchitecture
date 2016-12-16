@@ -722,7 +722,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
             txtout.write(':Cores: %s\n' % deployments['pools'][pool]['CoreCapacity'])
             txtout.write(':RAM: %s\n' % convToUnits(deployments['pools'][pool]['MemoryCapacity']))
             txtout.write('\n')
-        if 'hosts' in deployments['pools'][pool]:
+        if 'hosts' in deployments['pools'][pool] and len(deployments['pools'][pool]['hosts'].keys()):
             txtout.write('Hosts\n')
             txtout.write('\n'.rjust(linewidth, '*'))
             txtout.write('\n')
@@ -739,7 +739,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                 txtout.write('\n')
             txtout.write('============================================= ====== ========\n')
         txtout.write('\n\n')
-        if 'services' in deployments['pools'][pool]:
+        if 'services' in deployments['pools'][pool] and len(deployments['pools'][pool]['services'].keys()):
             txtout.write('Services\n')
             txtout.write('\n'.rjust(linewidth, '*'))
             txtout.write('\n')
@@ -775,7 +775,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
             txtout.write('  :Enabled: %s\n' % str(deployments['VHostList'][vhost]['enabled']))
             txtout.write('\n')
         txtout.write('\n')
-    if 'PortList' in deployments:
+    if 'PortList' in deployments and len(deployments['PortList'].keys()):
         txtout.write('Public Ports\n')
         txtout.write('\n'.rjust(linewidth, '+'))
         txtout.write('\n')
@@ -799,7 +799,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
             txtout.write(':Total RAM: %s\n' % convToUnits(deployments['pools'][pool]['MemoryCapacity']))
         if 'MemoryCommitment' in deployments['pools'][pool] and deployments['pools'][pool]['MemoryCommitment']:
             txtout.write(':RAM Commitment: %s\n' % convToUnits(deployments['pools'][pool]['MemoryCommitment']))
-        if 'VirtualIPs' in deployments['pools'][pool] and deployments['pools'][pool]['VirtualIPs']:
+        if 'VirtualIPs' in deployments['pools'][pool] and len(deployments['pools'][pool]['VirtualIPs']):
             virtualIPs = []
             for virtualip in deployments['pools'][pool]['VirtualIPs']:
                 virtualIPs.append('%s: %s/%s' % (virtualip['BindInterface'], 
@@ -807,7 +807,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                                                  virtualip['Netmask']))
             txtout.write(':Virtual IPs: %s\n' % '\n'.join(virtualIPs))
         txtout.write('\n')
-        if 'hosts' in deployments['pools'][pool]:
+        if 'hosts' in deployments['pools'][pool] and len(deployments['pools'][pool]['hosts'].keys()):
             txtout.write('Hosts\n')
             txtout.write('\n'.rjust(linewidth, '*'))
             txtout.write('\n')
@@ -823,7 +823,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                 txtout.write('\n')
                 txtout.write('  :Host ID: %s\n' % hostid)
                 txtout.write('  :IP Address: %s\n' % ip)
-                txtout.write('  :CC Port (RPC): %s\n' % rpcport)
+                txtout.write('  :CC RPC Port: %s\n' % rpcport)
                 txtout.write('  :Private Network: %s\n' % pnetwork)
                 txtout.write('  :Cores: %s\n' % cores)
                 txtout.write('  :Memory: %s\n' % memory)
@@ -832,7 +832,6 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                 metrics.sort()
                 txtout.write('============================== ========== ==========\n')
                 txtout.write('Metric Over Last 24H           Average    Maximum   \n')
-                #txtout.write('------------------------- ---------------------\n')
                 txtout.write('============================== ========== ==========\n')
                 for metric in metrics:
                     avgValue = hostinfo['historicalPerf']['avg'][metric]
@@ -859,7 +858,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                 txtout.write('============================== ========== ==========\n')
                 txtout.write('\n______\n\n|\n\n')
         txtout.write('\n')
-        if 'services' in deployments['pools'][pool]:
+        if 'services' in deployments['pools'][pool] and len(deployments['pools'][pool]['services'].keys()):
             txtout.write('Services\n')
             txtout.write('\n'.rjust(linewidth, '*'))
             txtout.write('\n')
@@ -869,7 +868,6 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                 serviceinfo = deployments['pools'][pool]['services'][service]
                 ramcommit = serviceinfo['RAMCommitment']
                 cpucommit = serviceinfo['CPUCommitment']
-
                 txtout.write(':Service: %s\n' % service)
                 txtout.write('\n')
                 txtout.write('  :Service ID: %s\n' % serviceinfo['ID'])
@@ -882,7 +880,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                 txtout.write('  :Instances: %s\n' % serviceinfo['Instances'])
                 txtout.write('  :Deployment ID: %s\n' % serviceinfo['DeploymentID'])
                 txtout.write('  :Host Policy: %s\n' % serviceinfo['HostPolicy'])
-                if 'AddressAssignments' in serviceinfo:
+                if 'AddressAssignments' in serviceinfo and len(serviceinfo['AddressAssignments'].keys()):
                     txtout.write('\n  Address Assignments\n\n')
                     for name in serviceinfo['AddressAssignments']:
                         asgntype = serviceinfo['AddressAssignments'][name]['AssignmentType']
@@ -902,7 +900,6 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                     metrics.sort()
                     txtout.write('============================== ========== ==========\n')
                     txtout.write('Metric Over Last 24H           Average    Maximum   \n')
-                    #txtout.write('------------------------- ---------------------\n')
                     txtout.write('============================== ========== ==========\n')
                     for metric in metrics:
                         avgValue = serviceinfo['historicalPerf']['avg'][metric]
@@ -952,62 +949,91 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
         txtout.write('\n'.rjust(linewidth, '-'))
         txtout.write('|\n\n')
         for collector in rminfo['collectors']:
-            devtotal = 0
-            txtout.write('Information for Collector: %s\n' % collector)
-            txtout.write('\n'.rjust(linewidth, '+'))
-            txtout.write('\n')
-            collectorinfo = rminfo['collectors'][collector]
-            txtout.write('+--------------------+----------+------------------------------+-----------+\n')
-            txtout.write('| Device Class       | Devices  | Component Type               | Components|\n')
-            txtout.write('+--------------------+----------+------------------------------+-----------+\n')
-            for devclass in collectorinfo:
-                if devclass != 'Other':
-                    devclassname = devclass.partition('/zport/dmd/Devices/')[2]
-                else:
-                    devclassname = devclass
-                devclassinfo = collectorinfo[devclass]
-                txtout.write('| ')
-                txtout.write(str(devclassname).ljust(19))
-                txtout.write('| ')
-                devices = devclassinfo['devices']
-                devtotal += devices
-                txtout.write(str(devices).rjust(9))
-                txtout.write('| ')
-                txtout.write(' '.rjust(29))
-                txtout.write('| ')
-                txtout.write(' '.rjust(10))
-                txtout.write('| ')
+            if rminfo['collectors'][collector].keys():
+                devtotal = 0
+                txtout.write('Information for Collector: %s\n' % collector)
+                txtout.write('\n'.rjust(linewidth, '+'))
                 txtout.write('\n')
-                if devclassinfo['components']:
-                    for component in devclassinfo['components']:
+                collectorinfo = rminfo['collectors'][collector]
+                compcolummwidth = 14
+                tablelinebreak = 12
+                tablelinecount = 0
+                for devclass in collectorinfo:
+                    for comp in collectorinfo[devclass]['components']:
+                        if len(str(comp)) > compcolummwidth:
+                            compcolummwidth = len(str(comp)) + 1
+                headerline = '+--------------------+----------+-' + \
+                             '-' * (compcolummwidth) + \
+                             '+-----------+\n'
+                boldheaderline = '+====================+==========+=' + \
+                                 '=' * (compcolummwidth) + \
+                                 '+===========+\n'
+                tableheader = '| Device Class       | Devices  | ' + \
+                              'Component Type'.ljust(compcolummwidth) + \
+                              '| Components|\n'
+                txtout.write(headerline)
+                txtout.write(tableheader)
+                txtout.write(boldheaderline)
+                for devclass in collectorinfo:
+                    if devclass != 'Other':
+                        devclassname = devclass.partition('/zport/dmd/Devices/')[2]
+                    else:
+                        devclassname = devclass
+                    devclassinfo = collectorinfo[devclass]
+                    txtout.write('| ')
+                    txtout.write(str(devclassname).ljust(19))
+                    txtout.write('| ')
+                    devices = devclassinfo['devices']
+                    devtotal += devices
+                    txtout.write(str(devices).rjust(9))
+                    txtout.write('| ')
+                    txtout.write(' '.rjust(compcolummwidth))
+                    txtout.write('| ')
+                    txtout.write(' '.rjust(10))
+                    txtout.write('| ')
+                    txtout.write('\n')
+                    if devclassinfo['components']:
+                        tablelinecount += 1
+                        for component in devclassinfo['components']:
+                            txtout.write('| ')
+                            txtout.write(' '.rjust(19))
+                            txtout.write('| ')
+                            txtout.write(' '.rjust(9))
+                            txtout.write('| ')
+                            txtout.write(str(component).ljust(compcolummwidth))
+                            txtout.write('| ')
+                            componentcount = devclassinfo['components'][component]
+                            txtout.write(str(componentcount).rjust(10))
+                            txtout.write('|')
+                            txtout.write('\n')
+                            txtout.write(headerline)
+                            tablelinecount += 1
+                            if tablelinecount >= tablelinebreak:
+                                txtout.write('\n')
+                                txtout.write(headerline)
+                                txtout.write(tableheader)
+                                txtout.write(boldheaderline)
+                                tablelinecount = 0
+                    else:
                         txtout.write('| ')
                         txtout.write(' '.rjust(19))
                         txtout.write('| ')
                         txtout.write(' '.rjust(9))
                         txtout.write('| ')
-                        txtout.write(str(component).ljust(29))
+                        txtout.write('None'.ljust(compcolummwidth))
                         txtout.write('| ')
-                        componentcount = devclassinfo['components'][component]
-                        txtout.write(str(componentcount).rjust(10))
+                        txtout.write(str('N/A').rjust(10))
                         txtout.write('|')
                         txtout.write('\n')
-                        txtout.write('+--------------------+----------+------------------------------+-----------+\n')
-                else:
-                    txtout.write('| ')
-                    txtout.write(' '.rjust(19))
-                    txtout.write('| ')
-                    txtout.write(' '.rjust(9))
-                    txtout.write('| ')
-                    txtout.write('None'.ljust(29))
-                    txtout.write('| ')
-                    txtout.write(str('N/A').rjust(10))
-                    txtout.write('|')
-                    txtout.write('\n')
-                    txtout.write('+--------------------+----------+------------------------------+-----------+\n')
-                #txtout.write('+====================+==========+==============================+==========+\n')
-            #txtout.write('**Total**            %s\n' % str(devtotal).rjust(10))
-            #txtout.write('+====================+==========+==============================+==========+\n')
-            txtout.write('\n\n')
+                        txtout.write(headerline)
+                        tablelinecount += 1
+                        if tablelinecount >= tablelinebreak:
+                            txtout.write('\n')
+                            txtout.write(headerline)
+                            txtout.write(tableheader)
+                            txtout.write(boldheaderline)
+                            tablelinecount = 0
+                txtout.write('\n\n')
 
     txtout.close()
     archive = tarfile.open(outfile + ".tgz", "w|gz")
