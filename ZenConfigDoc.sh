@@ -550,6 +550,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
     services = getObjectData(opener, headers, cchost, 'services')
     collectorFromPool = {}
     for service in services:
+        servicename = ''
         if service['Startup'] and service['Startup'] != 'N/A':
             pool = service['PoolID']
             if pool == '':
@@ -600,7 +601,11 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
         else:
             pass
         if 'Tags' in service and service['Tags'] and 'collector' in service['Tags']:
+            if not servicename:
+                servicename = service['Name']
             print "Getting collector performance information for service %s" % servicename
+            if servicename not in deployments['pools'][pool]['services']:
+                deployments['pools'][pool]['services'][servicename] = {}
             deployments['pools'][pool]['services'][servicename]['CollectorPerf'] = {}
             svcStats = getCollectorSvcStats(opener, headers, cchost, service['ID'], agg='max', timedur=24)
             deployments['pools'][pool]['services'][servicename]['CollectorPerf']['max'] = svcStats
@@ -675,7 +680,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                         deployments['pools'][pool]['services'][servicename]['AddressAssignments'][name]['Host'] = hostname
     for pool in deployments['pools']:
         for service in deployments['pools'][pool]['services']:
-            if deployments['pools'][pool]['services'][service]['CollectorDaemon']:
+            if deployments['pools'][pool]['services'][service].get('CollectorDaemon'):
                 deployments['pools'][pool]['services'][service]['CollectorName'] = collectorFromPool.get(pool)
                 deployments['pools'][pool]['CollectorName'] = collectorFromPool.get(pool)
     _cj.clear()
