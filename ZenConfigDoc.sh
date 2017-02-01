@@ -600,7 +600,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
             print "Found collector %s for pool %s" % (service['Name'], service['PoolID'])
         else:
             pass
-        if 'Tags' in service and service['Tags'] and 'collector' in service['Tags']:
+        if 'Tags' in service and service['Tags'] and 'collector' in service['Tags'] and service.get('Startup') and service['Startup'] != 'N/A':
             if not servicename:
                 servicename = service['Name']
             print "Getting collector performance information for service %s" % servicename
@@ -755,7 +755,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
             services.sort()
             for service in services:
                 serviceinfo = deployments['pools'][pool]['services'][service]
-                ramcommit = serviceinfo['RAMCommitment']
+                ramcommit = serviceinfo.get('RAMCommitment')
                 txtout.write(str(service).ljust(26))
                 if ramcommit:
                     txtout.write('%sB\n' % ramcommit)
@@ -871,20 +871,20 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
             services.sort()
             for service in services:
                 serviceinfo = deployments['pools'][pool]['services'][service]
-                ramcommit = serviceinfo['RAMCommitment']
-                cpucommit = serviceinfo['CPUCommitment']
+                ramcommit = serviceinfo.get('RAMCommitment')
+                cpucommit = serviceinfo.get('CPUCommitment')
                 txtout.write(':Service: %s\n' % service)
                 txtout.write('\n')
-                txtout.write('  :Service ID: %s\n' % serviceinfo['ID'])
-                txtout.write('  :Description: %s\n' % serviceinfo['Description'])
+                txtout.write('  :Service ID: %s\n' % serviceinfo.get('ID'))
+                txtout.write('  :Description: %s\n' % serviceinfo.get('Description'))
                 if ramcommit:
                     txtout.write('  :RAM Commitment: %s\n' % ramcommit)
                 if ramcommit:
                     txtout.write('  :CPU Commitment: %s\n' % cpucommit)
-                txtout.write('  :Launch Option: %s\n' % serviceinfo['Launch'])
-                txtout.write('  :Instances: %s\n' % serviceinfo['Instances'])
-                txtout.write('  :Deployment ID: %s\n' % serviceinfo['DeploymentID'])
-                txtout.write('  :Host Policy: %s\n' % serviceinfo['HostPolicy'])
+                txtout.write('  :Launch Option: %s\n' % serviceinfo.get('Launch'))
+                txtout.write('  :Instances: %s\n' % serviceinfo.get('Instances'))
+                txtout.write('  :Deployment ID: %s\n' % serviceinfo.get('DeploymentID'))
+                txtout.write('  :Host Policy: %s\n' % serviceinfo.get('HostPolicy'))
                 if 'AddressAssignments' in serviceinfo and len(serviceinfo['AddressAssignments'].keys()):
                     txtout.write('\n  Address Assignments\n\n')
                     for name in serviceinfo['AddressAssignments']:
