@@ -6,7 +6,7 @@ Download the script onto a system which meets the following requirements
 
 Download command:
 
-wget -q https://github.com/zenoss/DeploymentArchitecture/blob/master/ZenConfigDoc.sh
+wget https://raw.githubusercontent.com/zenoss/DeploymentArchitecture/master/ZenConfigDoc.sh
 
 Once downloaded, make sure the script is executable and run it with the appropriate input parameters. 
 If you have any special characters in your password, it's best to enclose them in single quotes.
