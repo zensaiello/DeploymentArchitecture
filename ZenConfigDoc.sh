@@ -13,6 +13,7 @@ import tarfile
 import argparse
 import gzip
 import os
+from sys import stderr
 
 from difflib import Differ
 
@@ -105,12 +106,15 @@ def loginToRM(opener, headers, host, username, password):
     except:
         return False
 
-def getObjectData(opener, headers, host, object):
+def getObjectData(opener, headers, host, object, debug=False):
     url = urlunparse(('https', host, '/' + object, '', '', ''))
     req = urllib2.Request(url, headers=headers)
     try:
         resp = opener.open(req)
-        resp_data = loads(resp.read())
+        respraw = resp.read()
+        if debug:
+            print("reply: '%s'" % respraw.replace('\n', '\\n'))
+        resp_data = loads(respraw.decode('utf-8'))
         return resp_data
     except urllib2.URLError as e:
         if hasattr(e, 'reason'):
@@ -131,12 +135,15 @@ def parsePerfData(resp_data):
         metrics[metricName] = metricValue
     return metrics
 
-def _getMetrics(opener, headers, cchost, timedur=24, agg='max', data=None):
+def _getMetrics(opener, headers, cchost, timedur=24, agg='max', data=None, debug=False):
     url = urlunparse(('https', cchost, '/metrics/api/performance/query/', '', '', ''))
     req = urllib2.Request(url, headers=headers, data=data)
     try:
         resp = opener.open(req)
-        resp_data = loads(resp.read())
+        respraw = resp.read()
+        if debug:
+            print("reply: '%s'" % respraw.replace('\n', '\\n'))
+        resp_data = loads(respraw.decode('utf-8'))
         metrics = parsePerfData(resp_data)
         return metrics
     except urllib2.URLError as e:
@@ -211,7 +218,7 @@ def getHostStats(opener, headers, cchost, hostid, timedur=24, agg='max'):
             '"aggregator":"sum","name":"Memory - Major Page Faults"}' \
         ']' \
     '}' 
-    return _getMetrics(opener, headers, cchost, timedur=timedur, agg=agg, data=hostJson)
+    return _getMetrics(opener, headers, cchost, timedur=timedur, agg=agg, data=hostJson, debug=http_debug)
     
 def getServiceStats(opener, headers, cchost, svcid, timedur=24, agg='max'):
     svcJson = '{' \
@@ -240,7 +247,7 @@ def getServiceStats(opener, headers, cchost, svcid, timedur=24, agg='max'):
             '"aggregator":"sum","name":"Memory - Cache"}' \
         ']' \
     '}' 
-    return _getMetrics(opener, headers, cchost, timedur=timedur, agg=agg, data=svcJson)
+    return _getMetrics(opener, headers, cchost, timedur=timedur, agg=agg, data=svcJson, debug=http_debug)
 
 def getCollectorSvcStats(opener, headers, cchost, svcid, timedur=24, agg='max'):
     collSvcJson = '{' \
@@ -274,15 +281,18 @@ def getCollectorSvcStats(opener, headers, cchost, svcid, timedur=24, agg='max'):
             '"aggregator":"sum","name":"Device Count"}' \
         ']' \
     '}' 
-    return _getMetrics(opener, headers, cchost, timedur=timedur, agg=agg, data=collSvcJson)
+    return _getMetrics(opener, headers, cchost, timedur=timedur, agg=agg, data=collSvcJson, debug=http_debug)
 
-def _getRMData(opener, headers, rmhost, router, data):
+def _getRMData(opener, headers, rmhost, router, data, debug=False):
     path = '/zport/dmd/%s' % router
     url = urlunparse(('https', rmhost, path, '', '', ''))
     req = urllib2.Request(url, headers=headers, data=data)
     try:
         resp = opener.open(req)
-        resp_data = loads(resp.read())
+        respraw = resp.read()
+        if debug:
+            print("reply: '%s'" % respraw.replace('\n', '\\n'))
+        resp_data = loads(respraw.decode('utf-8'))
         return resp_data
     except urllib2.URLError as e:
         if hasattr(e, 'reason'):
@@ -324,7 +334,7 @@ def getCollectorSvcStats(opener, headers, cchost, svcid, timedur=24, agg='max'):
             '"aggregator":"sum","name":"Device Count"}' \
         ']' \
     '}' 
-    return _getMetrics(opener, headers, cchost, timedur=timedur, agg=agg, data=collSvcJson)
+    return _getMetrics(opener, headers, cchost, timedur=timedur, agg=agg, data=collSvcJson, debug=http_debug)
     
 def getRMDeviceComponentCount(opener, headers, rmhost, device):
     data = '{'\
@@ -338,10 +348,11 @@ def getRMDeviceComponentCount(opener, headers, rmhost, device):
     '}'
     results = {}
     router = 'device_router'
-    resp_data = _getRMData(opener, headers, rmhost, router, data)
+    resp_data = _getRMData(opener, headers, rmhost, router, data, debug=http_debug)
     if resp_data and resp_data['result']:
         for compTypeData in resp_data['result']:
-            results[compTypeData['id']] = compTypeData['text']['count']
+            if 'count' in compTypeData['text']:
+                results[compTypeData['id']] = compTypeData['text']['count']
     return results
 
 def getRMDevicesByCollector(opener, headers, rmhost, collector):
@@ -381,7 +392,7 @@ def getRMDevicesByCollector(opener, headers, rmhost, collector):
     '}'
     results = {}
     router = 'device_router'
-    resp_data = _getRMData(opener, headers, rmhost, router, data)
+    resp_data = _getRMData(opener, headers, rmhost, router, data, debug=http_debug)
     if resp_data and resp_data['result'] and resp_data['result']['devices']:
         devices = resp_data['result']['devices']
         if len(devices) != resp_data['result']['totalCount']:
@@ -513,7 +524,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
 
     object = 'pools'
     print "Getting pool information"
-    pools = getObjectData(opener, headers, cchost, object)
+    pools = getObjectData(opener, headers, cchost, object, debug=http_debug)
     for pool in pools:
         deployments['pools'][pool] = {}
         deployments['pools'][pool]['services'] = {}
@@ -525,7 +536,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
         deployments['pools'][pool]['MemoryCommitment'] = pools[pool]['MemoryCommitment']
         deployments['pools'][pool]['VirtualIPs'] = pools[pool]['VirtualIPs']
     print "getting host information"
-    hosts = getObjectData(opener, headers, cchost, 'hosts')
+    hosts = getObjectData(opener, headers, cchost, 'hosts', debug=http_debug)
     for host in hosts:
         hostname = hosts[host]['Name']
         pool = hosts[host]['PoolID']
@@ -545,9 +556,9 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
         hostStats = getHostStats(opener, headers, cchost, hosts[host]['ID'], agg='avg', timedur=24)
         deployments['pools'][pool]['hosts'][hostname]['historicalPerf']['avg'] = hostStats
     print "Getting default host alias"
-    defaultHostAlias = getObjectData(opener, headers, cchost, 'hosts/defaultHostAlias')['hostalias']
+    defaultHostAlias = getObjectData(opener, headers, cchost, 'hosts/defaultHostAlias', debug=http_debug)['hostalias']
     print "Getting services information"
-    services = getObjectData(opener, headers, cchost, 'services')
+    services = getObjectData(opener, headers, cchost, 'services', debug=http_debug)
     collectorFromPool = {}
     for service in services:
         servicename = ''
@@ -804,7 +815,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
             txtout.write(':Total RAM: %s\n' % convToUnits(deployments['pools'][pool]['MemoryCapacity']))
         if 'MemoryCommitment' in deployments['pools'][pool] and deployments['pools'][pool]['MemoryCommitment']:
             txtout.write(':RAM Commitment: %s\n' % convToUnits(deployments['pools'][pool]['MemoryCommitment']))
-        if 'VirtualIPs' in deployments['pools'][pool] and len(deployments['pools'][pool]['VirtualIPs']):
+        if 'VirtualIPs' in deployments['pools'][pool] and len(deployments['pools'][pool]['VirtualIPs']) and deployments['pools'][pool] != 'null':
             virtualIPs = []
             for virtualip in deployments['pools'][pool]['VirtualIPs']:
                 virtualIPs.append('%s: %s/%s' % (virtualip['BindInterface'], 
