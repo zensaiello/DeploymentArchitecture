@@ -375,7 +375,7 @@ def getRMDevicesByCollector(opener, headers, rmhost, collector):
 	'"action": "DeviceRouter",'\
 	'"method": "getDevices",'\
 	'"data": [{'\
-    '"limit": 0, '\
+    '"limit": 100000, '\
     '"params": {'\
     '"collector": "'+ collector +'"'\
     '},'\
