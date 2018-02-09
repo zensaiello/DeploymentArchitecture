@@ -593,7 +593,7 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                 for config in configFiles:
                     configName = config.split('/')[-1]
                     configFile = configFiles[config]['Content'].splitlines()
-                    origConfigFile = origConfigFiles[config]['Content'].splitlines()
+                    origConfigFile = origConfigFiles.get(config, {}).get('Content', '').splitlines()
                     diffText = differ.compare(origConfigFile, configFile)
                     changedConfig = [confMatch2.match(diffLine).group(1) for diffLine in diffText if confMatch2.match(diffLine) is not None]
                     if len(changedConfig):
