@@ -72,11 +72,13 @@ def getAuthCookie(opener, headers, data, host, loginPage):
         return True
     except urllib2.URLError as e:
         if hasattr(e, 'reason'):
-            if getattr(e, 'code') == 401:
+            if hasattr(e, 'code') and e.code == 401:
                 print 'Incorrect credentials for Control Center'
             else:
                 print 'We failed to reach a server.'
                 print 'Reason: ', e.reason
+                if hasattr(e.reason, 'reason') and e.reason.reason == u'CERTIFICATE_VERIFY_FAILED':
+                    print "Running this program with the '-I' flag will bypass this check"
             return False
         elif hasattr(e, 'code'):
             print "The server couldn\'t fulfill the request."
