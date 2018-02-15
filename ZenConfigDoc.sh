@@ -13,7 +13,8 @@ import tarfile
 import argparse
 import gzip
 import os
-from sys import stderr
+import sys
+from getpass import getpass
 
 from difflib import Differ
 
@@ -71,8 +72,11 @@ def getAuthCookie(opener, headers, data, host, loginPage):
         return True
     except urllib2.URLError as e:
         if hasattr(e, 'reason'):
-            print 'We failed to reach a server.'
-            print 'Reason: ', e.reason
+            if getattr(e, 'code') == 401:
+                print 'Incorrect credentials for Control Center'
+            else:
+                print 'We failed to reach a server.'
+                print 'Reason: ', e.reason
             return False
         elif hasattr(e, 'code'):
             print "The server couldn\'t fulfill the request."
@@ -93,11 +97,19 @@ def loginToRM(opener, headers, host, username, password):
     # Log in to the API and get the login cookie
     try:
         opener.open(req)
-        return True
+        authcookies = [cookie for cookie in _cj if cookie.name == 'ZAuthToken']
+        if authcookies:
+            return True
+        else:
+            print 'Incorrect credentials for RM'
+            return False
     except urllib2.URLError as e:
         if hasattr(e, 'reason'):
-            print 'We failed to reach a server.'
-            print 'Reason: ', e.reason
+            if getattr(e, 'code') == 401:
+                print 'Incorrect credentials for RM'
+            else:
+                print 'We failed to reach a server.'
+                print 'Reason: ', e.reason
             return False
         elif hasattr(e, 'code'):
             print "The server couldn\'t fulfill the request."
@@ -454,13 +466,13 @@ p.add_argument("-C", "--CChost", action="store", dest="cchost", required=True, h
 #  Username for CC - example "root"
 p.add_argument("-u", "--user", action="store", dest="username", required=True, help="username with access to the CC UI")
 #  Password for CC - example "zenoss"
-p.add_argument("-p", "--password", action="store", dest="password", required=True, help="password for the CC UI")
+p.add_argument("-p", "--password", action="store", dest="password", required=False, help="password for the CC UI")
 #  Hostname for RM server - example "zenoss5.testlab.zenoss.loc"
 p.add_argument("-R", "--RMhost", action="store", dest="rmhost", required=True, help="Resource Manager endpoint")
 #  Username for RM - example "admin"
 p.add_argument("-U", "--RMuser", action="store", dest="rmuser", required=True, help="username with access to RM")
 #  Password for RM - example "zenoss"
-p.add_argument("-P", "--RMpass", action="store", dest="rmpass", required=True, help="password for RM")
+p.add_argument("-P", "--RMpass", action="store", dest="rmpass", required=False, help="password for RM")
 #  Ignore certificates
 p.add_argument("-I", "--ignore_certs", action="store_true", dest="ignore_certs", required=False, help="ignore ssl certificates when connecting" ) 
 #  Debug-level http logging
@@ -486,22 +498,6 @@ daemonsWithoutMetrics = ('zminion', 'collectorredis',
                          'MetricShipper', 'zenjmx', 
                          'zenjserver', 'zenucsevents',)
 
-username = args.username
-password = args.password
-_creds = {"username": username, "password": password}
-creds = dumps(_creds)
-headers = {"Content-Type": "application/json"}
-
-rmhost = args.rmhost
-rmuser = args.rmuser
-rmpass = args.rmpass
-_rmcreds = {"username": rmuser, "password": rmpass}
-rmcreds = dumps(_rmcreds)
-
-# opener = urllib2.build_opener(urllib2.HTTPSHandler(debuglevel=1), urllib2.HTTPCookieProcessor(_cj))
-# opener = urllib2.build_opener(urllib2.HTTPSHandler(), urllib2.HTTPCookieProcessor(_cj))
-
-
 ignore_certs = args.ignore_certs
 http_debug = args.http_debug
 
@@ -517,341 +513,436 @@ opener = urllib2.build_opener(urllib2.HTTPSHandler(**handler_args), urllib2.HTTP
 # Install the opener.
 # Now all calls to urllib2.urlopen use our opener.
 urllib2.install_opener(opener)
+username = args.username
+if args.password:
+    password = args.password
+else:
+    password = getpass("Please enter the Control Center password for {}:  ".format(username))
+_creds = {"username": username, "password": password}
+creds = dumps(_creds)
+headers = {"Content-Type": "application/json"}
+
+# Attempt to log into both CC and RM - fail immediately if either login fails
+#   so we waste less time.
 loginPage = 'login'
 print "Attempting to login to CC"
-if getAuthCookie(opener, headers, creds, cchost, loginPage):
-    print "Logged in successfully"
+if not getAuthCookie(opener, headers, creds, cchost, loginPage):
+    print "Unable to log in to Control Center"
+    sys.exit(1)
+print "Successfully logged in to Control Center"
 
-    object = 'pools'
-    print "Getting pool information"
-    pools = getObjectData(opener, headers, cchost, object, debug=http_debug)
-    for pool in pools:
-        deployments['pools'][pool] = {}
-        deployments['pools'][pool]['services'] = {}
+rmhost = args.rmhost
+rmuser = args.rmuser
+if args.rmpass:
+    rmpass = args.rmpass
+else:
+    rmpass = getpass("Please enter the RM password for {}:  ".format(rmuser))
+_rmcreds = {"username": rmuser, "password": rmpass}
+rmcreds = dumps(_rmcreds)
+print "Attempting to login to RM"
+if not loginToRM(opener, headers, rmhost, rmuser, rmpass):
+    print "Unable to log in to RM"
+    sys.exit(2)
+print "Successfully logged in to RM"
+
+object = 'pools'
+print "Getting pool information"
+pools = getObjectData(opener, headers, cchost, object, debug=http_debug)
+for pool in pools:
+    deployments['pools'][pool] = {}
+    deployments['pools'][pool]['services'] = {}
+    deployments['pools'][pool]['hosts'] = {}
+    deployments['pools'][pool]['ID'] = pools[pool]['ID']
+    deployments['pools'][pool]['Description'] = pools[pool]['Description']
+    deployments['pools'][pool]['CoreCapacity'] = pools[pool]['CoreCapacity']
+    deployments['pools'][pool]['MemoryCapacity'] = pools[pool]['MemoryCapacity']
+    deployments['pools'][pool]['MemoryCommitment'] = pools[pool]['MemoryCommitment']
+    deployments['pools'][pool]['VirtualIPs'] = pools[pool]['VirtualIPs']
+print "getting host information"
+hosts = getObjectData(opener, headers, cchost, 'hosts', debug=http_debug)
+for host in hosts:
+    hostname = hosts[host]['Name']
+    pool = hosts[host]['PoolID']
+    if 'hosts' not in deployments['pools'][pool]:
         deployments['pools'][pool]['hosts'] = {}
-        deployments['pools'][pool]['ID'] = pools[pool]['ID']
-        deployments['pools'][pool]['Description'] = pools[pool]['Description']
-        deployments['pools'][pool]['CoreCapacity'] = pools[pool]['CoreCapacity']
-        deployments['pools'][pool]['MemoryCapacity'] = pools[pool]['MemoryCapacity']
-        deployments['pools'][pool]['MemoryCommitment'] = pools[pool]['MemoryCommitment']
-        deployments['pools'][pool]['VirtualIPs'] = pools[pool]['VirtualIPs']
-    print "getting host information"
-    hosts = getObjectData(opener, headers, cchost, 'hosts', debug=http_debug)
-    for host in hosts:
-        hostname = hosts[host]['Name']
-        pool = hosts[host]['PoolID']
-        if 'hosts' not in deployments['pools'][pool]:
-            deployments['pools'][pool]['hosts'] = {}
-        deployments['pools'][pool]['hosts'][hostname] = {}
-        deployments['pools'][pool]['hosts'][hostname]['hostid'] = hosts[host]['ID']
-        deployments['pools'][pool]['hosts'][hostname]['IP'] = hosts[host]['IPAddr']
-        deployments['pools'][pool]['hosts'][hostname]['Cores'] = hosts[host]['Cores']
-        deployments['pools'][pool]['hosts'][hostname]['Memory'] = hosts[host]['Memory']
-        deployments['pools'][pool]['hosts'][hostname]['PrivateNetwork'] = hosts[host]['PrivateNetwork']
-        deployments['pools'][pool]['hosts'][hostname]['RPCPort'] = hosts[host]['RPCPort']
-        deployments['pools'][pool]['hosts'][hostname]['historicalPerf'] = {}
-        print "Getting historical performance information for host %s" % hostname
-        hostStats = getHostStats(opener, headers, cchost, hosts[host]['ID'], agg='max', timedur=24)
-        deployments['pools'][pool]['hosts'][hostname]['historicalPerf']['max'] = hostStats
-        hostStats = getHostStats(opener, headers, cchost, hosts[host]['ID'], agg='avg', timedur=24)
-        deployments['pools'][pool]['hosts'][hostname]['historicalPerf']['avg'] = hostStats
-    print "Getting default host alias"
-    defaultHostAlias = getObjectData(opener, headers, cchost, 'hosts/defaultHostAlias', debug=http_debug)['hostalias']
-    print "Getting services information"
-    services = getObjectData(opener, headers, cchost, 'services', debug=http_debug)
-    collectorFromPool = {}
-    for service in services:
-        servicename = ''
-        if service['Startup'] and service['Startup'] != 'N/A':
-            pool = service['PoolID']
-            if pool == '':
-                pool = 'Internal'
-                if pool not in deployments['pools']:
-                    deployments['pools'][pool] = {}
-            servicename = service['Name']
-            if 'services' not in deployments['pools'][pool]:
-                deployments['pools'][pool]['services'] = {}
-            deployments['pools'][pool]['services'][servicename] = {}
-            deployments['pools'][pool]['services'][servicename]['ID'] = service['ID']
-            deployments['pools'][pool]['services'][servicename]['RAMCommitment'] = service['RAMCommitment']
-            deployments['pools'][pool]['services'][servicename]['ParentServiceID'] = service['ParentServiceID']
-            deployments['pools'][pool]['services'][servicename]['HostPolicy'] = service['HostPolicy']
-            deployments['pools'][pool]['services'][servicename]['Hostname'] = service['Hostname']
-            deployments['pools'][pool]['services'][servicename]['Instances'] = service['Instances']
-            deployments['pools'][pool]['services'][servicename]['Launch'] = service['Launch']
-            deployments['pools'][pool]['services'][servicename]['DeploymentID'] = service['DeploymentID']
-            deployments['pools'][pool]['services'][servicename]['Description'] = service['Description']
-            deployments['pools'][pool]['services'][servicename]['CPUCommitment'] = service['CPUCommitment']
-            deployments['pools'][pool]['services'][servicename]['Startup'] = service['Startup']
-            if service['Tags'] and 'collector' in service['Tags']:
-                deployments['pools'][pool]['services'][servicename]['CollectorDaemon'] = True
-            else:
-                deployments['pools'][pool]['services'][servicename]['CollectorDaemon'] = False
-            configFiles = service['ConfigFiles']
-            origConfigFiles = service['OriginalConfigs']
-            if configFiles:
-                for config in configFiles:
-                    configName = config.split('/')[-1]
-                    configFile = configFiles[config]['Content'].splitlines()
-                    origConfigFile = origConfigFiles.get(config, {}).get('Content', '').splitlines()
-                    diffText = differ.compare(origConfigFile, configFile)
-                    changedConfig = [confMatch2.match(diffLine).group(1) for diffLine in diffText if confMatch2.match(diffLine) is not None]
-                    if len(changedConfig):
-                        if 'configs' not in deployments['pools'][pool]['services'][servicename]:
-                            deployments['pools'][pool]['services'][servicename]['configs'] = {}
-                        deployments['pools'][pool]['services'][servicename]['configs'][configName] = changedConfig
-            print "Getting historical performance information for service %s" % servicename
-            deployments['pools'][pool]['services'][servicename]['historicalPerf'] = {}
-            svcStats = getServiceStats(opener, headers, cchost, service['ID'], agg='max', timedur=24)
-            deployments['pools'][pool]['services'][servicename]['historicalPerf']['max'] = svcStats
-            svcStats = getServiceStats(opener, headers, cchost, service['ID'], agg='avg', timedur=24)
-            deployments['pools'][pool]['services'][servicename]['historicalPerf']['avg'] = svcStats
-        elif 'Tags' in service and service['Tags'] and 'collector' in service['Tags'] and service['PoolID'] not in collectorFromPool:
-            collectorFromPool[service['PoolID']] = service['Name']
-            print "Found collector %s for pool %s" % (service['Name'], service['PoolID'])
+    deployments['pools'][pool]['hosts'][hostname] = {}
+    deployments['pools'][pool]['hosts'][hostname]['hostid'] = hosts[host]['ID']
+    deployments['pools'][pool]['hosts'][hostname]['IP'] = hosts[host]['IPAddr']
+    deployments['pools'][pool]['hosts'][hostname]['Cores'] = hosts[host]['Cores']
+    deployments['pools'][pool]['hosts'][hostname]['Memory'] = hosts[host]['Memory']
+    deployments['pools'][pool]['hosts'][hostname]['PrivateNetwork'] = hosts[host]['PrivateNetwork']
+    deployments['pools'][pool]['hosts'][hostname]['RPCPort'] = hosts[host]['RPCPort']
+    deployments['pools'][pool]['hosts'][hostname]['historicalPerf'] = {}
+    print "Getting historical performance information for host %s" % hostname
+    hostStats = getHostStats(opener, headers, cchost, hosts[host]['ID'], agg='max', timedur=24)
+    deployments['pools'][pool]['hosts'][hostname]['historicalPerf']['max'] = hostStats
+    hostStats = getHostStats(opener, headers, cchost, hosts[host]['ID'], agg='avg', timedur=24)
+    deployments['pools'][pool]['hosts'][hostname]['historicalPerf']['avg'] = hostStats
+print "Getting default host alias"
+defaultHostAlias = getObjectData(opener, headers, cchost, 'hosts/defaultHostAlias', debug=http_debug)['hostalias']
+print "Getting services information"
+services = getObjectData(opener, headers, cchost, 'services', debug=http_debug)
+collectorFromPool = {}
+for service in services:
+    servicename = ''
+    if service['Startup'] and service['Startup'] != 'N/A':
+        pool = service['PoolID']
+        if pool == '':
+            pool = 'Internal'
+            if pool not in deployments['pools']:
+                deployments['pools'][pool] = {}
+        servicename = service['Name']
+        if 'services' not in deployments['pools'][pool]:
+            deployments['pools'][pool]['services'] = {}
+        deployments['pools'][pool]['services'][servicename] = {}
+        deployments['pools'][pool]['services'][servicename]['ID'] = service['ID']
+        deployments['pools'][pool]['services'][servicename]['RAMCommitment'] = service['RAMCommitment']
+        deployments['pools'][pool]['services'][servicename]['ParentServiceID'] = service['ParentServiceID']
+        deployments['pools'][pool]['services'][servicename]['HostPolicy'] = service['HostPolicy']
+        deployments['pools'][pool]['services'][servicename]['Hostname'] = service['Hostname']
+        deployments['pools'][pool]['services'][servicename]['Instances'] = service['Instances']
+        deployments['pools'][pool]['services'][servicename]['Launch'] = service['Launch']
+        deployments['pools'][pool]['services'][servicename]['DeploymentID'] = service['DeploymentID']
+        deployments['pools'][pool]['services'][servicename]['Description'] = service['Description']
+        deployments['pools'][pool]['services'][servicename]['CPUCommitment'] = service['CPUCommitment']
+        deployments['pools'][pool]['services'][servicename]['Startup'] = service['Startup']
+        if service['Tags'] and 'collector' in service['Tags']:
+            deployments['pools'][pool]['services'][servicename]['CollectorDaemon'] = True
         else:
-            pass
-        if 'Tags' in service and service['Tags'] and 'collector' in service['Tags'] and service.get('Startup') and service['Startup'] != 'N/A':
-            if not servicename:
-                servicename = service['Name']
-            print "Getting collector performance information for service %s" % servicename
-            if servicename not in deployments['pools'][pool]['services']:
-                deployments['pools'][pool]['services'][servicename] = {}
-            deployments['pools'][pool]['services'][servicename]['CollectorPerf'] = {}
-            svcStats = getCollectorSvcStats(opener, headers, cchost, service['ID'], agg='max', timedur=24)
-            deployments['pools'][pool]['services'][servicename]['CollectorPerf']['max'] = svcStats
-            svcStats = getCollectorSvcStats(opener, headers, cchost, service['ID'], agg='avg', timedur=24)
-            deployments['pools'][pool]['services'][servicename]['CollectorPerf']['avg'] = svcStats
-        if service.get('Endpoints'):
-            for endpoint in service['Endpoints']:
-                if endpoint['Purpose'] == 'export':
-                    if endpoint['VHosts']:
-                        # Add to vhosts for the pool (older 5.0 style)
-                        for vhost in endpoint['VHosts']:
-                            if 'VHostList' not in deployments['pools'][pool]:
-                                deployments['pools'][pool]['VHostList'] = {}
-                            deployments['pools'][pool]['VHostList'][vhost] = {}
-                            if vhost.find('.') == -1:
-                                deployments['pools'][pool]['VHostList'][vhost]['url'] = 'https://' + '.'.join((vhost, defaultHostAlias))
-                            else:
-                                deployments['pools'][pool]['VHostList'][vhost]['url'] = 'https://' + str(vhost)
-                            deployments['pools'][pool]['VHostList'][vhost]['enabled'] = True
-                            deployments['pools'][pool]['VHostList'][vhost]['service'] = servicename
-                        pass
-                    if 'VHostList' in endpoint and endpoint['VHostList']:
-                        # Add to vhosts for the pool (newer 5.1 style)
-                        for _vhost in endpoint['VHostList']:
-                            vhost = _vhost['Name']
-                            enabled = _vhost['Enabled']
-                            if 'VHostList' not in deployments:
-                                deployments['VHostList'] = {}
-                            deployments['VHostList'][vhost] = {}
-                            if vhost.find('.') == -1:
-                                deployments['VHostList'][vhost]['url'] = 'https://' + '.'.join((vhost, defaultHostAlias))
-                            else:
-                                deployments['VHostList'][vhost]['url'] = 'https://' + str(vhost)
-                            deployments['VHostList'][vhost]['enabled'] = enabled
-                            deployments['VHostList'][vhost]['service'] = servicename
-                    if 'PortList' in endpoint and endpoint['PortList']:
-                        # Add to public ports for the pool (newer 5.1 style)
-                        for _pport in endpoint['PortList']:
-                            pport = _pport['PortAddr']
-                            enabled = _pport['Enabled']
-                            if 'PortList' not in deployments:
-                                deployments['PortList'] = {}
-                            deployments['PortList'][pport] = {}
-                            deployments['PortList'][pport]['address'] = pport
-                            deployments['PortList'][pport]['enabled'] = enabled
-                            deployments['PortList'][pport]['endpoint'] = endpoint['Name']
-                            deployments['PortList'][pport]['privateport'] = endpoint['PortNumber']
-                            deployments['PortList'][pport]['service'] = servicename
-                    if endpoint['AddressAssignment'].get('AssignmentType'):
-                        # Add Address assignement to service
-                        ip = endpoint['AddressAssignment']['IPAddr']
-                        asgntype = endpoint['AddressAssignment']['AssignmentType']
-                        port = endpoint['AddressAssignment']['Port']
-                        name = endpoint['AddressAssignment']['EndpointName']
-                        hostid = endpoint['AddressAssignment']['HostID']
-                        if hostid:
-                            for host in deployments['pools'][pool]['hosts']:
-                                if hostid == deployments['pools'][pool]['hosts'][host]['hostid']:
-                                    hostname = host
-                                    break
-                            else:
-                                # Should never get here
-                                hostname = 'Unkown'
-                        else:
-                            hostname = 'N/A'
-                        if 'AddressAssignments' not in deployments['pools'][pool]['services'][servicename]:
-                            deployments['pools'][pool]['services'][servicename]['AddressAssignments'] = {}
-                        deployments['pools'][pool]['services'][servicename]['AddressAssignments'][name] = {}
-                        deployments['pools'][pool]['services'][servicename]['AddressAssignments'][name]['AssignmentType'] = asgntype
-                        deployments['pools'][pool]['services'][servicename]['AddressAssignments'][name]['IP'] = ip
-                        deployments['pools'][pool]['services'][servicename]['AddressAssignments'][name]['Port'] = port
-                        deployments['pools'][pool]['services'][servicename]['AddressAssignments'][name]['Host'] = hostname
-    for pool in deployments['pools']:
-        for service in deployments['pools'][pool]['services']:
-            if deployments['pools'][pool]['services'][service].get('CollectorDaemon'):
-                deployments['pools'][pool]['services'][service]['CollectorName'] = collectorFromPool.get(pool)
-                deployments['pools'][pool]['CollectorName'] = collectorFromPool.get(pool)
-    _cj.clear()
-    if loginToRM(opener, headers, rmhost, rmuser, rmpass):
-        print "Successfully logged in to RM"
-        collectors = collectorFromPool.values()
-        deployments['RM'] = getRMStats(opener, headers, rmhost, collectors)
+            deployments['pools'][pool]['services'][servicename]['CollectorDaemon'] = False
+        configFiles = service['ConfigFiles']
+        origConfigFiles = service['OriginalConfigs']
+        if configFiles:
+            for config in configFiles:
+                configName = config.split('/')[-1]
+                configFile = configFiles[config]['Content'].splitlines()
+                origConfigFile = origConfigFiles.get(config, {}).get('Content', '').splitlines()
+                diffText = differ.compare(origConfigFile, configFile)
+                changedConfig = [confMatch2.match(diffLine).group(1) for diffLine in diffText if confMatch2.match(diffLine) is not None]
+                if len(changedConfig):
+                    if 'configs' not in deployments['pools'][pool]['services'][servicename]:
+                        deployments['pools'][pool]['services'][servicename]['configs'] = {}
+                    deployments['pools'][pool]['services'][servicename]['configs'][configName] = changedConfig
+        print "Getting historical performance information for service %s" % servicename
+        deployments['pools'][pool]['services'][servicename]['historicalPerf'] = {}
+        svcStats = getServiceStats(opener, headers, cchost, service['ID'], agg='max', timedur=24)
+        deployments['pools'][pool]['services'][servicename]['historicalPerf']['max'] = svcStats
+        svcStats = getServiceStats(opener, headers, cchost, service['ID'], agg='avg', timedur=24)
+        deployments['pools'][pool]['services'][servicename]['historicalPerf']['avg'] = svcStats
+    elif 'Tags' in service and service['Tags'] and 'collector' in service['Tags'] and service['PoolID'] not in collectorFromPool:
+        collectorFromPool[service['PoolID']] = service['Name']
+        print "Found collector %s for pool %s" % (service['Name'], service['PoolID'])
     else:
-        print "Unable to log in to RM"
-    print "Creating temporary files:"
-    print "%s.json" % outfile
-    print "%s.rst" % outfile
-    print "\n"
-    jsonout = open(outfile + '.json', "w")
-    txtout = open(outfile + '.rst', "w")
-    jsonout.write(dumps(deployments))
-    jsonout.close()
-    txtout.write('\n'.rjust(linewidth, '='))
-    txtout.write('Architecture Document\n')
-    txtout.write('\n'.rjust(linewidth, '='))
-    txtout.write('\n\n')
-    txtout.write('\n'.rjust(linewidth, '-'))
-    txtout.write('Customer: %s\n' % cust_name)
-    txtout.write('\n'.rjust(linewidth, '-'))
-    txtout.write('\n'.rjust(linewidth, '-'))
-    txtout.write('Environment: %s\n' % environ)
-    txtout.write('\n'.rjust(linewidth, '-'))
-    txtout.write('|\n\n')
-    txtout.write('\n'.rjust(linewidth, '-'))
-    txtout.write('Created on: %s\n' % asctime())
-    txtout.write('\n'.rjust(linewidth, '-'))
-    txtout.write('|\n|\n|\n|\n')
-    txtout.write('\n\n')
-    txtout.write('\n'.rjust(linewidth, '-'))
-    txtout.write('Control Center Summary Information\n')
-    txtout.write('\n'.rjust(linewidth, '-'))
-    txtout.write('\n')
-    
-    for pool in deployments['pools']:
-        txtout.write('Summary for pool %s\n' % pool)
-        txtout.write('\n'.rjust(linewidth, '+'))
-        txtout.write('\n')
-        if 'CoreCapacity' in deployments['pools'][pool]:
-            txtout.write(':Cores: %s\n' % deployments['pools'][pool]['CoreCapacity'])
-            txtout.write(':RAM: %s\n' % convToUnits(deployments['pools'][pool]['MemoryCapacity']))
-            txtout.write('\n')
-        if 'hosts' in deployments['pools'][pool] and len(deployments['pools'][pool]['hosts'].keys()):
-            txtout.write('Hosts\n')
-            txtout.write('\n'.rjust(linewidth, '*'))
-            txtout.write('\n')
-            txtout.write('============================================= ====== ========\n')
-            txtout.write('Host Name                                      Cores      RAM\n')
-            txtout.write('============================================= ====== ========\n')
-            for host in deployments['pools'][pool]['hosts']:
-                hostinfo = deployments['pools'][pool]['hosts'][host]
-                cores = hostinfo['Cores']
-                memory = convToUnits(hostinfo['Memory'])
-                txtout.write(str(host).ljust(46))
-                txtout.write(str(cores).rjust(6))
-                txtout.write(str(memory).rjust(8))
-                txtout.write('\n')
-            txtout.write('============================================= ====== ========\n')
-        txtout.write('\n\n')
-        if 'services' in deployments['pools'][pool] and len(deployments['pools'][pool]['services'].keys()):
-            txtout.write('Services\n')
-            txtout.write('\n'.rjust(linewidth, '*'))
-            txtout.write('\n')
-            txtout.write('========================= ===============\n')
-            txtout.write('Service Name              RAM Commitment\n')
-            txtout.write('========================= ===============\n')
-            services = deployments['pools'][pool]['services'].keys()
-            services.sort()
-            for service in services:
-                serviceinfo = deployments['pools'][pool]['services'][service]
-                ramcommit = serviceinfo.get('RAMCommitment')
-                txtout.write(str(service).ljust(26))
-                if ramcommit:
-                    txtout.write('%sB\n' % ramcommit)
-                else:
-                    txtout.write('N/A\n')
-            txtout.write('========================= ===============\n')
-            txtout.write('\n______\n\n|\n\n')
-    txtout.write('\n\n')
-    txtout.write('\n'.rjust(linewidth, '-'))
-    txtout.write('Control Center Detail Information\n')
-    txtout.write('\n'.rjust(linewidth, '-'))
-    txtout.write('\n')
+        pass
+    if 'Tags' in service and service['Tags'] and 'collector' in service['Tags'] and service.get('Startup') and service['Startup'] != 'N/A':
+        if not servicename:
+            servicename = service['Name']
+        print "Getting collector performance information for service %s" % servicename
+        if servicename not in deployments['pools'][pool]['services']:
+            deployments['pools'][pool]['services'][servicename] = {}
+        deployments['pools'][pool]['services'][servicename]['CollectorPerf'] = {}
+        svcStats = getCollectorSvcStats(opener, headers, cchost, service['ID'], agg='max', timedur=24)
+        deployments['pools'][pool]['services'][servicename]['CollectorPerf']['max'] = svcStats
+        svcStats = getCollectorSvcStats(opener, headers, cchost, service['ID'], agg='avg', timedur=24)
+        deployments['pools'][pool]['services'][servicename]['CollectorPerf']['avg'] = svcStats
+    if service.get('Endpoints'):
+        for endpoint in service['Endpoints']:
+            if endpoint['Purpose'] == 'export':
+                if endpoint['VHosts']:
+                    # Add to vhosts for the pool (older 5.0 style)
+                    for vhost in endpoint['VHosts']:
+                        if 'VHostList' not in deployments['pools'][pool]:
+                            deployments['pools'][pool]['VHostList'] = {}
+                        deployments['pools'][pool]['VHostList'][vhost] = {}
+                        if vhost.find('.') == -1:
+                            deployments['pools'][pool]['VHostList'][vhost]['url'] = 'https://' + '.'.join((vhost, defaultHostAlias))
+                        else:
+                            deployments['pools'][pool]['VHostList'][vhost]['url'] = 'https://' + str(vhost)
+                        deployments['pools'][pool]['VHostList'][vhost]['enabled'] = True
+                        deployments['pools'][pool]['VHostList'][vhost]['service'] = servicename
+                    pass
+                if 'VHostList' in endpoint and endpoint['VHostList']:
+                    # Add to vhosts for the pool (newer 5.1 style)
+                    for _vhost in endpoint['VHostList']:
+                        vhost = _vhost['Name']
+                        enabled = _vhost['Enabled']
+                        if 'VHostList' not in deployments:
+                            deployments['VHostList'] = {}
+                        deployments['VHostList'][vhost] = {}
+                        if vhost.find('.') == -1:
+                            deployments['VHostList'][vhost]['url'] = 'https://' + '.'.join((vhost, defaultHostAlias))
+                        else:
+                            deployments['VHostList'][vhost]['url'] = 'https://' + str(vhost)
+                        deployments['VHostList'][vhost]['enabled'] = enabled
+                        deployments['VHostList'][vhost]['service'] = servicename
+                if 'PortList' in endpoint and endpoint['PortList']:
+                    # Add to public ports for the pool (newer 5.1 style)
+                    for _pport in endpoint['PortList']:
+                        pport = _pport['PortAddr']
+                        enabled = _pport['Enabled']
+                        if 'PortList' not in deployments:
+                            deployments['PortList'] = {}
+                        deployments['PortList'][pport] = {}
+                        deployments['PortList'][pport]['address'] = pport
+                        deployments['PortList'][pport]['enabled'] = enabled
+                        deployments['PortList'][pport]['endpoint'] = endpoint['Name']
+                        deployments['PortList'][pport]['privateport'] = endpoint['PortNumber']
+                        deployments['PortList'][pport]['service'] = servicename
+                if endpoint['AddressAssignment'].get('AssignmentType'):
+                    # Add Address assignement to service
+                    ip = endpoint['AddressAssignment']['IPAddr']
+                    asgntype = endpoint['AddressAssignment']['AssignmentType']
+                    port = endpoint['AddressAssignment']['Port']
+                    name = endpoint['AddressAssignment']['EndpointName']
+                    hostid = endpoint['AddressAssignment']['HostID']
+                    if hostid:
+                        for host in deployments['pools'][pool]['hosts']:
+                            if hostid == deployments['pools'][pool]['hosts'][host]['hostid']:
+                                hostname = host
+                                break
+                        else:
+                            # Should never get here
+                            hostname = 'Unkown'
+                    else:
+                        hostname = 'N/A'
+                    if 'AddressAssignments' not in deployments['pools'][pool]['services'][servicename]:
+                        deployments['pools'][pool]['services'][servicename]['AddressAssignments'] = {}
+                    deployments['pools'][pool]['services'][servicename]['AddressAssignments'][name] = {}
+                    deployments['pools'][pool]['services'][servicename]['AddressAssignments'][name]['AssignmentType'] = asgntype
+                    deployments['pools'][pool]['services'][servicename]['AddressAssignments'][name]['IP'] = ip
+                    deployments['pools'][pool]['services'][servicename]['AddressAssignments'][name]['Port'] = port
+                    deployments['pools'][pool]['services'][servicename]['AddressAssignments'][name]['Host'] = hostname
+for pool in deployments['pools']:
+    for service in deployments['pools'][pool]['services']:
+        if deployments['pools'][pool]['services'][service].get('CollectorDaemon'):
+            deployments['pools'][pool]['services'][service]['CollectorName'] = collectorFromPool.get(pool)
+            deployments['pools'][pool]['CollectorName'] = collectorFromPool.get(pool)
+# _cj.clear()
 
-    if 'VHostList' in deployments:
-        txtout.write('VHosts\n')
-        txtout.write('\n'.rjust(linewidth, '+'))
+# Collect RM Info
+collectors = collectorFromPool.values()
+deployments['RM'] = getRMStats(opener, headers, rmhost, collectors)
+
+
+print "Creating temporary files:"
+print "%s.json" % outfile
+print "%s.rst" % outfile
+print "\n"
+jsonout = open(outfile + '.json', "w")
+txtout = open(outfile + '.rst', "w")
+jsonout.write(dumps(deployments))
+jsonout.close()
+txtout.write('\n'.rjust(linewidth, '='))
+txtout.write('Architecture Document\n')
+txtout.write('\n'.rjust(linewidth, '='))
+txtout.write('\n\n')
+txtout.write('\n'.rjust(linewidth, '-'))
+txtout.write('Customer: %s\n' % cust_name)
+txtout.write('\n'.rjust(linewidth, '-'))
+txtout.write('\n'.rjust(linewidth, '-'))
+txtout.write('Environment: %s\n' % environ)
+txtout.write('\n'.rjust(linewidth, '-'))
+txtout.write('|\n\n')
+txtout.write('\n'.rjust(linewidth, '-'))
+txtout.write('Created on: %s\n' % asctime())
+txtout.write('\n'.rjust(linewidth, '-'))
+txtout.write('|\n|\n|\n|\n')
+txtout.write('\n\n')
+txtout.write('\n'.rjust(linewidth, '-'))
+txtout.write('Control Center Summary Information\n')
+txtout.write('\n'.rjust(linewidth, '-'))
+txtout.write('\n')
+
+for pool in deployments['pools']:
+    txtout.write('Summary for pool %s\n' % pool)
+    txtout.write('\n'.rjust(linewidth, '+'))
+    txtout.write('\n')
+    if 'CoreCapacity' in deployments['pools'][pool]:
+        txtout.write(':Cores: %s\n' % deployments['pools'][pool]['CoreCapacity'])
+        txtout.write(':RAM: %s\n' % convToUnits(deployments['pools'][pool]['MemoryCapacity']))
         txtout.write('\n')
-        for vhost in deployments['VHostList']:
-            txtout.write(':Name: %s\n\n' % vhost)
-            txtout.write('  :URL: %s\n' % deployments['VHostList'][vhost]['url'])
-            txtout.write('  :Service: %s\n' % deployments['VHostList'][vhost]['service'])
-            txtout.write('  :Enabled: %s\n' % str(deployments['VHostList'][vhost]['enabled']))
+    if 'hosts' in deployments['pools'][pool] and len(deployments['pools'][pool]['hosts'].keys()):
+        txtout.write('Hosts\n')
+        txtout.write('\n'.rjust(linewidth, '*'))
+        txtout.write('\n')
+        txtout.write('============================================= ====== ========\n')
+        txtout.write('Host Name                                      Cores      RAM\n')
+        txtout.write('============================================= ====== ========\n')
+        for host in deployments['pools'][pool]['hosts']:
+            hostinfo = deployments['pools'][pool]['hosts'][host]
+            cores = hostinfo['Cores']
+            memory = convToUnits(hostinfo['Memory'])
+            txtout.write(str(host).ljust(46))
+            txtout.write(str(cores).rjust(6))
+            txtout.write(str(memory).rjust(8))
             txtout.write('\n')
+        txtout.write('============================================= ====== ========\n')
+    txtout.write('\n\n')
+    if 'services' in deployments['pools'][pool] and len(deployments['pools'][pool]['services'].keys()):
+        txtout.write('Services\n')
+        txtout.write('\n'.rjust(linewidth, '*'))
         txtout.write('\n')
-    if 'PortList' in deployments and len(deployments['PortList'].keys()):
-        txtout.write('Public Ports\n')
-        txtout.write('\n'.rjust(linewidth, '+'))
+        txtout.write('========================= ===============\n')
+        txtout.write('Service Name              RAM Commitment\n')
+        txtout.write('========================= ===============\n')
+        services = deployments['pools'][pool]['services'].keys()
+        services.sort()
+        for service in services:
+            serviceinfo = deployments['pools'][pool]['services'][service]
+            ramcommit = serviceinfo.get('RAMCommitment')
+            txtout.write(str(service).ljust(26))
+            if ramcommit:
+                txtout.write('%sB\n' % ramcommit)
+            else:
+                txtout.write('N/A\n')
+        txtout.write('========================= ===============\n')
+        txtout.write('\n______\n\n|\n\n')
+txtout.write('\n\n')
+txtout.write('\n'.rjust(linewidth, '-'))
+txtout.write('Control Center Detail Information\n')
+txtout.write('\n'.rjust(linewidth, '-'))
+txtout.write('\n')
+
+if 'VHostList' in deployments:
+    txtout.write('VHosts\n')
+    txtout.write('\n'.rjust(linewidth, '+'))
+    txtout.write('\n')
+    for vhost in deployments['VHostList']:
+        txtout.write(':Name: %s\n\n' % vhost)
+        txtout.write('  :URL: %s\n' % deployments['VHostList'][vhost]['url'])
+        txtout.write('  :Service: %s\n' % deployments['VHostList'][vhost]['service'])
+        txtout.write('  :Enabled: %s\n' % str(deployments['VHostList'][vhost]['enabled']))
         txtout.write('\n')
-        for pport in deployments['PortList']:
-            txtout.write(':Address: %s\n' % deployments['PortList'][pport]['address'])
-            txtout.write(':Service: %s\n' % deployments['PortList'][pport]['service'])
-            txtout.write(':Enabled: %s\n' % str(deployments['PortList'][pport]['enabled']))
+    txtout.write('\n')
+if 'PortList' in deployments and len(deployments['PortList'].keys()):
+    txtout.write('Public Ports\n')
+    txtout.write('\n'.rjust(linewidth, '+'))
+    txtout.write('\n')
+    for pport in deployments['PortList']:
+        txtout.write(':Address: %s\n' % deployments['PortList'][pport]['address'])
+        txtout.write(':Service: %s\n' % deployments['PortList'][pport]['service'])
+        txtout.write(':Enabled: %s\n' % str(deployments['PortList'][pport]['enabled']))
+        txtout.write('\n')
+    txtout.write('\n')
+for pool in deployments['pools']:
+    txtout.write('Detail information for pool %s\n' % pool)
+    txtout.write('\n'.rjust(linewidth, '+'))
+    txtout.write('\n')
+    if 'Description' in deployments['pools'][pool] and deployments['pools'][pool]['Description']:
+        txtout.write(':Description: %s\n' % deployments['pools'][pool]['Description'])
+    else:
+        txtout.write(':Description: *No description configured*\n')
+    if 'CoreCapacity' in deployments['pools'][pool]:
+        txtout.write(':Total Cores: %s\n' % deployments['pools'][pool]['CoreCapacity'])
+    if 'MemoryCapacity' in deployments['pools'][pool]:
+        txtout.write(':Total RAM: %s\n' % convToUnits(deployments['pools'][pool]['MemoryCapacity']))
+    if 'MemoryCommitment' in deployments['pools'][pool] and deployments['pools'][pool]['MemoryCommitment']:
+        txtout.write(':RAM Commitment: %s\n' % convToUnits(deployments['pools'][pool]['MemoryCommitment']))
+    if 'VirtualIPs' in deployments['pools'][pool] and len(deployments['pools'][pool]['VirtualIPs']) and deployments['pools'][pool] != 'null':
+        virtualIPs = []
+        for virtualip in deployments['pools'][pool]['VirtualIPs']:
+            virtualIPs.append('%s: %s/%s' % (virtualip['BindInterface'], 
+                                             virtualip['IP'], 
+                                             virtualip['Netmask']))
+        txtout.write(':Virtual IPs: %s\n' % '\n'.join(virtualIPs))
+    txtout.write('\n')
+    if 'hosts' in deployments['pools'][pool] and len(deployments['pools'][pool]['hosts'].keys()):
+        txtout.write('Hosts\n')
+        txtout.write('\n'.rjust(linewidth, '*'))
+        txtout.write('\n')
+        for host in deployments['pools'][pool]['hosts']:
+            hostinfo = deployments['pools'][pool]['hosts'][host]
+            cores = hostinfo['Cores']
+            memory = convToUnits(hostinfo['Memory'])
+            hostid = hostinfo['hostid']
+            ip = hostinfo['IP']
+            rpcport = hostinfo['RPCPort']
+            pnetwork = hostinfo['PrivateNetwork']
+            txtout.write(':Host: %s\n' % host)
             txtout.write('\n')
-        txtout.write('\n')
-    for pool in deployments['pools']:
-        txtout.write('Detail information for pool %s\n' % pool)
-        txtout.write('\n'.rjust(linewidth, '+'))
-        txtout.write('\n')
-        if 'Description' in deployments['pools'][pool] and deployments['pools'][pool]['Description']:
-            txtout.write(':Description: %s\n' % deployments['pools'][pool]['Description'])
-        else:
-            txtout.write(':Description: *No description configured*\n')
-        if 'CoreCapacity' in deployments['pools'][pool]:
-            txtout.write(':Total Cores: %s\n' % deployments['pools'][pool]['CoreCapacity'])
-        if 'MemoryCapacity' in deployments['pools'][pool]:
-            txtout.write(':Total RAM: %s\n' % convToUnits(deployments['pools'][pool]['MemoryCapacity']))
-        if 'MemoryCommitment' in deployments['pools'][pool] and deployments['pools'][pool]['MemoryCommitment']:
-            txtout.write(':RAM Commitment: %s\n' % convToUnits(deployments['pools'][pool]['MemoryCommitment']))
-        if 'VirtualIPs' in deployments['pools'][pool] and len(deployments['pools'][pool]['VirtualIPs']) and deployments['pools'][pool] != 'null':
-            virtualIPs = []
-            for virtualip in deployments['pools'][pool]['VirtualIPs']:
-                virtualIPs.append('%s: %s/%s' % (virtualip['BindInterface'], 
-                                                 virtualip['IP'], 
-                                                 virtualip['Netmask']))
-            txtout.write(':Virtual IPs: %s\n' % '\n'.join(virtualIPs))
-        txtout.write('\n')
-        if 'hosts' in deployments['pools'][pool] and len(deployments['pools'][pool]['hosts'].keys()):
-            txtout.write('Hosts\n')
-            txtout.write('\n'.rjust(linewidth, '*'))
+            txtout.write('  :Host ID: %s\n' % hostid)
+            txtout.write('  :IP Address: %s\n' % ip)
+            txtout.write('  :CC RPC Port: %s\n' % rpcport)
+            txtout.write('  :Private Network: %s\n' % pnetwork)
+            txtout.write('  :Cores: %s\n' % cores)
+            txtout.write('  :Memory: %s\n' % memory)
             txtout.write('\n')
-            for host in deployments['pools'][pool]['hosts']:
-                hostinfo = deployments['pools'][pool]['hosts'][host]
-                cores = hostinfo['Cores']
-                memory = convToUnits(hostinfo['Memory'])
-                hostid = hostinfo['hostid']
-                ip = hostinfo['IP']
-                rpcport = hostinfo['RPCPort']
-                pnetwork = hostinfo['PrivateNetwork']
-                txtout.write(':Host: %s\n' % host)
-                txtout.write('\n')
-                txtout.write('  :Host ID: %s\n' % hostid)
-                txtout.write('  :IP Address: %s\n' % ip)
-                txtout.write('  :CC RPC Port: %s\n' % rpcport)
-                txtout.write('  :Private Network: %s\n' % pnetwork)
-                txtout.write('  :Cores: %s\n' % cores)
-                txtout.write('  :Memory: %s\n' % memory)
-                txtout.write('\n')
-                metrics = hostinfo['historicalPerf']['max'].keys()
+            metrics = hostinfo['historicalPerf']['max'].keys()
+            metrics.sort()
+            txtout.write('============================== ========== ==========\n')
+            txtout.write('Metric Over Last 24H           Average    Maximum   \n')
+            txtout.write('============================== ========== ==========\n')
+            for metric in metrics:
+                avgValue = hostinfo['historicalPerf']['avg'][metric]
+                maxValue = hostinfo['historicalPerf']['max'][metric]
+                if maxValue != 'N/A':
+                    if metric.startswith('CPU'):
+                        avgValue = '%s%%' % str(round(avgValue, 2))
+                        maxValue = '%s%%' % str(round(maxValue, 2))
+                    elif metric.startswith('Memory'):
+                        avgValue = convToUnits(avgValue)
+                        maxValue = convToUnits(maxValue)
+                    elif metric.startswith('DFS') and maxValue != 'N/A':
+                        avgValue = convToUnits(avgValue)
+                        maxValue = convToUnits(maxValue)
+                    elif metric.startswith('Load Average'):
+                        avgValue = str(round(avgValue, 2))
+                        maxValue = str(round(maxValue, 2))
+                    elif metric.startswith('IOWait'):
+                        avgValue = '%s%%' % str(round(avgValue, 2))
+                        maxValue = '%s%%' % str(round(maxValue, 2))
+                    else:
+                        pass
+                    txtout.write('%s %s %s\n' % (metric.ljust(30), avgValue.ljust(10), maxValue))
+            txtout.write('============================== ========== ==========\n')
+            txtout.write('\n______\n\n|\n\n')
+    txtout.write('\n')
+    if 'services' in deployments['pools'][pool] and len(deployments['pools'][pool]['services'].keys()):
+        txtout.write('Services\n')
+        txtout.write('\n'.rjust(linewidth, '*'))
+        txtout.write('\n')
+        services = deployments['pools'][pool]['services'].keys()
+        services.sort()
+        for service in services:
+            serviceinfo = deployments['pools'][pool]['services'][service]
+            ramcommit = serviceinfo.get('RAMCommitment')
+            cpucommit = serviceinfo.get('CPUCommitment')
+            txtout.write(':Service: %s\n' % service)
+            txtout.write('\n')
+            txtout.write('  :Service ID: %s\n' % serviceinfo.get('ID'))
+            txtout.write('  :Description: %s\n' % serviceinfo.get('Description'))
+            if ramcommit:
+                txtout.write('  :RAM Commitment: %s\n' % ramcommit)
+            if ramcommit:
+                txtout.write('  :CPU Commitment: %s\n' % cpucommit)
+            txtout.write('  :Launch Option: %s\n' % serviceinfo.get('Launch'))
+            txtout.write('  :Instances: %s\n' % serviceinfo.get('Instances'))
+            txtout.write('  :Deployment ID: %s\n' % serviceinfo.get('DeploymentID'))
+            txtout.write('  :Host Policy: %s\n' % serviceinfo.get('HostPolicy'))
+            if 'AddressAssignments' in serviceinfo and len(serviceinfo['AddressAssignments'].keys()):
+                txtout.write('\n  Address Assignments\n\n')
+                for name in serviceinfo['AddressAssignments']:
+                    asgntype = serviceinfo['AddressAssignments'][name]['AssignmentType']
+                    ip = serviceinfo['AddressAssignments'][name]['IP']
+                    port = serviceinfo['AddressAssignments'][name]['Port']
+                    host = serviceinfo['AddressAssignments'][name]['Host']
+                    txtout.write('    %s  %s assignment of %s:%s on host %s\n' % (name, asgntype, ip, port, host))
+                txtout.write('\n\n')
+            if 'configs' in serviceinfo:
+                for config in serviceinfo['configs']:
+                    txtout.write('\n|\n\n  Changed lines in config file %s::\n\n' % config)
+                    txtout.write('    %s' % '\n    '.join(serviceinfo['configs'][config]))
+                    txtout.write('  \n')
+            txtout.write('\n|\n\n')
+            if len([val for val in serviceinfo['historicalPerf']['avg'].values() if val != 'N/A']):
+                metrics = serviceinfo['historicalPerf']['max'].keys()
                 metrics.sort()
                 txtout.write('============================== ========== ==========\n')
                 txtout.write('Metric Over Last 24H           Average    Maximum   \n')
                 txtout.write('============================== ========== ==========\n')
                 for metric in metrics:
-                    avgValue = hostinfo['historicalPerf']['avg'][metric]
-                    maxValue = hostinfo['historicalPerf']['max'][metric]
+                    avgValue = serviceinfo['historicalPerf']['avg'][metric]
+                    maxValue = serviceinfo['historicalPerf']['max'][metric]
                     if maxValue != 'N/A':
                         if metric.startswith('CPU'):
                             avgValue = '%s%%' % str(round(avgValue, 2))
@@ -859,186 +950,99 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                         elif metric.startswith('Memory'):
                             avgValue = convToUnits(avgValue)
                             maxValue = convToUnits(maxValue)
-                        elif metric.startswith('DFS') and maxValue != 'N/A':
-                            avgValue = convToUnits(avgValue)
-                            maxValue = convToUnits(maxValue)
-                        elif metric.startswith('Load Average'):
-                            avgValue = str(round(avgValue, 2))
-                            maxValue = str(round(maxValue, 2))
-                        elif metric.startswith('IOWait'):
-                            avgValue = '%s%%' % str(round(avgValue, 2))
-                            maxValue = '%s%%' % str(round(maxValue, 2))
                         else:
                             pass
                         txtout.write('%s %s %s\n' % (metric.ljust(30), avgValue.ljust(10), maxValue))
                 txtout.write('============================== ========== ==========\n')
                 txtout.write('\n______\n\n|\n\n')
-        txtout.write('\n')
-        if 'services' in deployments['pools'][pool] and len(deployments['pools'][pool]['services'].keys()):
-            txtout.write('Services\n')
-            txtout.write('\n'.rjust(linewidth, '*'))
+            if 'CollectorPerf' in serviceinfo and len([val for val in serviceinfo['CollectorPerf']['avg'].values() if val != 'N/A']):
+                metrics = serviceinfo['CollectorPerf']['max'].keys()
+                metrics.sort()
+                txtout.write('============================== ========== ==========\n')
+                txtout.write('Metric Over Last 24H           Average    Maximum   \n')
+                txtout.write('============================== ========== ==========\n')
+                for metric in metrics:
+                    avgValue = serviceinfo['CollectorPerf']['avg'][metric]
+                    maxValue = serviceinfo['CollectorPerf']['max'][metric]
+                    if maxValue != 'N/A':
+                        if metric.startswith('Datapoint'):
+                            avgValue = '%s/s' % str(round(avgValue, 3))
+                            maxValue = '%s/s' % str(round(maxValue, 3))
+                        else:
+                            avgValue = '%s' % str(round(avgValue, 1))
+                            maxValue = '%s' % str(round(maxValue, 1))
+                        txtout.write('%s %s %s\n' % (metric.ljust(30), avgValue.ljust(10), maxValue))
+                txtout.write('============================== ========== ==========\n')
+                txtout.write('\n______\n\n|\n\n')
+            elif 'CollectorPerf' in serviceinfo and service not in daemonsWithoutMetrics:
+                txtout.write('**No metrics for last 24 hours**\n')
+                txtout.write('\n______\n\n|\n\n')
+            else:
+                pass
+    txtout.write('\n\n')
+        
+if 'RM' in deployments:
+    rminfo = deployments['RM']
+    txtout.write('\n'.rjust(linewidth, '-'))
+    txtout.write('Resource Manager Information\n')
+    txtout.write('\n'.rjust(linewidth, '-'))
+    txtout.write('|\n\n')
+    for collector in rminfo['collectors']:
+        if rminfo['collectors'][collector].keys():
+            devtotal = 0
+            txtout.write('Information for Collector: %s\n' % collector)
+            txtout.write('\n'.rjust(linewidth, '+'))
             txtout.write('\n')
-            services = deployments['pools'][pool]['services'].keys()
-            services.sort()
-            for service in services:
-                serviceinfo = deployments['pools'][pool]['services'][service]
-                ramcommit = serviceinfo.get('RAMCommitment')
-                cpucommit = serviceinfo.get('CPUCommitment')
-                txtout.write(':Service: %s\n' % service)
-                txtout.write('\n')
-                txtout.write('  :Service ID: %s\n' % serviceinfo.get('ID'))
-                txtout.write('  :Description: %s\n' % serviceinfo.get('Description'))
-                if ramcommit:
-                    txtout.write('  :RAM Commitment: %s\n' % ramcommit)
-                if ramcommit:
-                    txtout.write('  :CPU Commitment: %s\n' % cpucommit)
-                txtout.write('  :Launch Option: %s\n' % serviceinfo.get('Launch'))
-                txtout.write('  :Instances: %s\n' % serviceinfo.get('Instances'))
-                txtout.write('  :Deployment ID: %s\n' % serviceinfo.get('DeploymentID'))
-                txtout.write('  :Host Policy: %s\n' % serviceinfo.get('HostPolicy'))
-                if 'AddressAssignments' in serviceinfo and len(serviceinfo['AddressAssignments'].keys()):
-                    txtout.write('\n  Address Assignments\n\n')
-                    for name in serviceinfo['AddressAssignments']:
-                        asgntype = serviceinfo['AddressAssignments'][name]['AssignmentType']
-                        ip = serviceinfo['AddressAssignments'][name]['IP']
-                        port = serviceinfo['AddressAssignments'][name]['Port']
-                        host = serviceinfo['AddressAssignments'][name]['Host']
-                        txtout.write('    %s  %s assignment of %s:%s on host %s\n' % (name, asgntype, ip, port, host))
-                    txtout.write('\n\n')
-                if 'configs' in serviceinfo:
-                    for config in serviceinfo['configs']:
-                        txtout.write('\n|\n\n  Changed lines in config file %s::\n\n' % config)
-                        txtout.write('    %s' % '\n    '.join(serviceinfo['configs'][config]))
-                        txtout.write('  \n')
-                txtout.write('\n|\n\n')
-                if len([val for val in serviceinfo['historicalPerf']['avg'].values() if val != 'N/A']):
-                    metrics = serviceinfo['historicalPerf']['max'].keys()
-                    metrics.sort()
-                    txtout.write('============================== ========== ==========\n')
-                    txtout.write('Metric Over Last 24H           Average    Maximum   \n')
-                    txtout.write('============================== ========== ==========\n')
-                    for metric in metrics:
-                        avgValue = serviceinfo['historicalPerf']['avg'][metric]
-                        maxValue = serviceinfo['historicalPerf']['max'][metric]
-                        if maxValue != 'N/A':
-                            if metric.startswith('CPU'):
-                                avgValue = '%s%%' % str(round(avgValue, 2))
-                                maxValue = '%s%%' % str(round(maxValue, 2))
-                            elif metric.startswith('Memory'):
-                                avgValue = convToUnits(avgValue)
-                                maxValue = convToUnits(maxValue)
-                            else:
-                                pass
-                            txtout.write('%s %s %s\n' % (metric.ljust(30), avgValue.ljust(10), maxValue))
-                    txtout.write('============================== ========== ==========\n')
-                    txtout.write('\n______\n\n|\n\n')
-                if 'CollectorPerf' in serviceinfo and len([val for val in serviceinfo['CollectorPerf']['avg'].values() if val != 'N/A']):
-                    metrics = serviceinfo['CollectorPerf']['max'].keys()
-                    metrics.sort()
-                    txtout.write('============================== ========== ==========\n')
-                    txtout.write('Metric Over Last 24H           Average    Maximum   \n')
-                    txtout.write('============================== ========== ==========\n')
-                    for metric in metrics:
-                        avgValue = serviceinfo['CollectorPerf']['avg'][metric]
-                        maxValue = serviceinfo['CollectorPerf']['max'][metric]
-                        if maxValue != 'N/A':
-                            if metric.startswith('Datapoint'):
-                                avgValue = '%s/s' % str(round(avgValue, 3))
-                                maxValue = '%s/s' % str(round(maxValue, 3))
-                            else:
-                                avgValue = '%s' % str(round(avgValue, 1))
-                                maxValue = '%s' % str(round(maxValue, 1))
-                            txtout.write('%s %s %s\n' % (metric.ljust(30), avgValue.ljust(10), maxValue))
-                    txtout.write('============================== ========== ==========\n')
-                    txtout.write('\n______\n\n|\n\n')
-                elif 'CollectorPerf' in serviceinfo and service not in daemonsWithoutMetrics:
-                    txtout.write('**No metrics for last 24 hours**\n')
-                    txtout.write('\n______\n\n|\n\n')
+            collectorinfo = rminfo['collectors'][collector]
+            compcolummwidth = 14
+            tablelinebreak = 12
+            tablelinecount = 0
+            for devclass in collectorinfo:
+                for comp in collectorinfo[devclass]['components']:
+                    if len(str(comp)) > compcolummwidth:
+                        compcolummwidth = len(str(comp)) + 1
+            headerline = '+--------------------+----------+-' + \
+                         '-' * (compcolummwidth) + \
+                         '+-----------+\n'
+            boldheaderline = '+====================+==========+=' + \
+                             '=' * (compcolummwidth) + \
+                             '+===========+\n'
+            tableheader = '| Device Class       | Devices  | ' + \
+                          'Component Type'.ljust(compcolummwidth) + \
+                          '| Components|\n'
+            txtout.write(headerline)
+            txtout.write(tableheader)
+            txtout.write(boldheaderline)
+            for devclass in collectorinfo:
+                if devclass != 'Other':
+                    devclassname = devclass.partition('/zport/dmd/Devices/')[2]
                 else:
-                    pass
-        txtout.write('\n\n')
-            
-    if 'RM' in deployments:
-        rminfo = deployments['RM']
-        txtout.write('\n'.rjust(linewidth, '-'))
-        txtout.write('Resource Manager Information\n')
-        txtout.write('\n'.rjust(linewidth, '-'))
-        txtout.write('|\n\n')
-        for collector in rminfo['collectors']:
-            if rminfo['collectors'][collector].keys():
-                devtotal = 0
-                txtout.write('Information for Collector: %s\n' % collector)
-                txtout.write('\n'.rjust(linewidth, '+'))
+                    devclassname = devclass
+                devclassinfo = collectorinfo[devclass]
+                txtout.write('| ')
+                txtout.write(str(devclassname).ljust(19))
+                txtout.write('| ')
+                devices = devclassinfo['devices']
+                devtotal += devices
+                txtout.write(str(devices).rjust(9))
+                txtout.write('| ')
+                txtout.write(' '.rjust(compcolummwidth))
+                txtout.write('| ')
+                txtout.write(' '.rjust(10))
+                txtout.write('| ')
                 txtout.write('\n')
-                collectorinfo = rminfo['collectors'][collector]
-                compcolummwidth = 14
-                tablelinebreak = 12
-                tablelinecount = 0
-                for devclass in collectorinfo:
-                    for comp in collectorinfo[devclass]['components']:
-                        if len(str(comp)) > compcolummwidth:
-                            compcolummwidth = len(str(comp)) + 1
-                headerline = '+--------------------+----------+-' + \
-                             '-' * (compcolummwidth) + \
-                             '+-----------+\n'
-                boldheaderline = '+====================+==========+=' + \
-                                 '=' * (compcolummwidth) + \
-                                 '+===========+\n'
-                tableheader = '| Device Class       | Devices  | ' + \
-                              'Component Type'.ljust(compcolummwidth) + \
-                              '| Components|\n'
-                txtout.write(headerline)
-                txtout.write(tableheader)
-                txtout.write(boldheaderline)
-                for devclass in collectorinfo:
-                    if devclass != 'Other':
-                        devclassname = devclass.partition('/zport/dmd/Devices/')[2]
-                    else:
-                        devclassname = devclass
-                    devclassinfo = collectorinfo[devclass]
-                    txtout.write('| ')
-                    txtout.write(str(devclassname).ljust(19))
-                    txtout.write('| ')
-                    devices = devclassinfo['devices']
-                    devtotal += devices
-                    txtout.write(str(devices).rjust(9))
-                    txtout.write('| ')
-                    txtout.write(' '.rjust(compcolummwidth))
-                    txtout.write('| ')
-                    txtout.write(' '.rjust(10))
-                    txtout.write('| ')
-                    txtout.write('\n')
-                    if devclassinfo['components']:
-                        tablelinecount += 1
-                        for component in devclassinfo['components']:
-                            txtout.write('| ')
-                            txtout.write(' '.rjust(19))
-                            txtout.write('| ')
-                            txtout.write(' '.rjust(9))
-                            txtout.write('| ')
-                            txtout.write(str(component).ljust(compcolummwidth))
-                            txtout.write('| ')
-                            componentcount = devclassinfo['components'][component]
-                            txtout.write(str(componentcount).rjust(10))
-                            txtout.write('|')
-                            txtout.write('\n')
-                            txtout.write(headerline)
-                            tablelinecount += 1
-                            if tablelinecount >= tablelinebreak:
-                                txtout.write('\n')
-                                txtout.write(headerline)
-                                txtout.write(tableheader)
-                                txtout.write(boldheaderline)
-                                tablelinecount = 0
-                    else:
+                if devclassinfo['components']:
+                    tablelinecount += 1
+                    for component in devclassinfo['components']:
                         txtout.write('| ')
                         txtout.write(' '.rjust(19))
                         txtout.write('| ')
                         txtout.write(' '.rjust(9))
                         txtout.write('| ')
-                        txtout.write('None'.ljust(compcolummwidth))
+                        txtout.write(str(component).ljust(compcolummwidth))
                         txtout.write('| ')
-                        txtout.write(str('N/A').rjust(10))
+                        componentcount = devclassinfo['components'][component]
+                        txtout.write(str(componentcount).rjust(10))
                         txtout.write('|')
                         txtout.write('\n')
                         txtout.write(headerline)
@@ -1049,17 +1053,34 @@ if getAuthCookie(opener, headers, creds, cchost, loginPage):
                             txtout.write(tableheader)
                             txtout.write(boldheaderline)
                             tablelinecount = 0
-                txtout.write('\n\n')
+                else:
+                    txtout.write('| ')
+                    txtout.write(' '.rjust(19))
+                    txtout.write('| ')
+                    txtout.write(' '.rjust(9))
+                    txtout.write('| ')
+                    txtout.write('None'.ljust(compcolummwidth))
+                    txtout.write('| ')
+                    txtout.write(str('N/A').rjust(10))
+                    txtout.write('|')
+                    txtout.write('\n')
+                    txtout.write(headerline)
+                    tablelinecount += 1
+                    if tablelinecount >= tablelinebreak:
+                        txtout.write('\n')
+                        txtout.write(headerline)
+                        txtout.write(tableheader)
+                        txtout.write(boldheaderline)
+                        tablelinecount = 0
+            txtout.write('\n\n')
 
-    txtout.close()
-    archive = tarfile.open(outfile + ".tgz", "w|gz")
-    archive.add(txtout.name, txtout.name.split('/').pop(), False)
-    archive.add(jsonout.name, jsonout.name.split('/').pop(), False)
-    archive.close()
-    print 'Output saved to:\n\t' + outfile + '.tgz'
-    os.remove(txtout.name)
-    os.remove(jsonout.name)
+txtout.close()
+archive = tarfile.open(outfile + ".tgz", "w|gz")
+archive.add(txtout.name, txtout.name.split('/').pop(), False)
+archive.add(jsonout.name, jsonout.name.split('/').pop(), False)
+archive.close()
+print 'Output saved to:\n\t' + outfile + '.tgz'
+os.remove(txtout.name)
+os.remove(jsonout.name)
 
-else:
-    print "Couldn't log in"
 
