@@ -13,7 +13,7 @@ If you have any special characters in your password, it's best to enclose them i
 
 The syntax for execution is:
  
-ZenConfigDoc.sh [-h] [-O OUTPUTPATH] -c CUSTOMER -e ENVIRONMENT -C CCHOST –u USERNAME -p PASSWORD -R RMHOST -U RMUSER -P RMPASS
+ZenConfigDoc.sh [-h] [-O OUTPUTPATH] -c CUSTOMER -e ENVIRONMENT -C CCHOST –u USERNAME [-p PASSWORD] -R RMHOST -U RMUSER [-P RMPASS]
  
 An example syntax from a test machine is:
 /root/ZenConfigDoc.sh -c test -e prod -C 10.88.111.112 -u root -p zenoss -R zenoss5.zenoss.loc -U admin -P 'Example!'
@@ -26,6 +26,8 @@ CCHOST is the Control Center Host or IP
 USERNAME is the CC user
 PASSWORD is the CC password
 RMHOST is the Resource manager 
- 
+
+If you do not provide either the CC or RM password in the command line arguments, you will be prompted for it.
+
 Once run, a single TGZ file will be generated which should be returned to Zenoss for review.
 
