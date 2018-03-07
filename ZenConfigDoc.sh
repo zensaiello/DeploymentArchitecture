@@ -3,7 +3,6 @@
 # This script captures information about the Zenoss master, hubs and collectors.  It outputs a reStructured Text
 #  report of the environment and some information about its health.
 
-
 # Copyright 2016, Zenoss, Inc. 
 
 from json import loads, dumps
@@ -23,7 +22,6 @@ import urllib2, base64, urllib
 from urlparse import urlunparse
 from pprint import pprint
 from time import time, asctime
-
 
 def convToUnits(number=0, divby=1024.0, unitstr="B"):
     """
@@ -248,9 +246,17 @@ def getServiceStats(opener, headers, cchost, svcid, timedur=24, agg='max'):
             '"rateOptions":{"counter":true,"counterMax":null,"resetThreshold":1},' \
             '"aggregator":"sum",' \
             '"name":"CPU - System"},' \
+            '{"metric":"docker.usageinkernelmode",' \
+            '"rate":false,' \
+            '"aggregator":"sum",' \
+            '"name":"CPU - System"},' \
             '{"metric":"cgroup.cpuacct.user",' \
             '"rate":true,' \
             '"rateOptions":{"counter":true,"counterMax":null,"resetThreshold":1},' \
+            '"aggregator":"sum",' \
+            '"name":"CPU - User"},' \
+            '{"metric":"docker.usageinusermode",' \
+            '"rate":false,' \
             '"aggregator":"sum",' \
             '"name":"CPU - User"},' \
             '{"metric":"cgroup.memory.totalrss",' \
@@ -1084,5 +1090,4 @@ archive.close()
 print 'Output saved to:\n\t' + outfile + '.tgz'
 os.remove(txtout.name)
 os.remove(jsonout.name)
-
 

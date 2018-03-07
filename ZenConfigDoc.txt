@@ -16,7 +16,7 @@ The syntax for execution is:
 ZenConfigDoc.sh [-h] [-O OUTPUTPATH] -c CUSTOMER -e ENVIRONMENT -C CCHOST –u USERNAME [-p PASSWORD] -R RMHOST -U RMUSER [-P RMPASS] [-I] [-d]
  
 An example syntax from a test machine is:
-/root/ZenConfigDoc.sh -c test -e prod -C 10.88.111.112 -u root -p zenoss -R zenoss5.zenoss.loc -U admin -P 'Example!'
+./ZenConfigDoc.sh -I -c test -e prod -C 10.88.111.112 -u root -p yourPassword -R zenoss5.yoursite.com -U admin -P 'Example!' -I
  
 PASSWORD -R RMHOST -U RMUSER -P RMPASS
 OUTPUTPATH is the path for the output - /tmp by default
