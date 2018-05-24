@@ -843,7 +843,7 @@ for comp in componentGen(dmd, "PerformanceConf"):
         try:
             dc = d.deviceClass().primaryAq().getPrimaryId()[10:]
         except AttributeError:
-            fixscript = 'for dev in dmd.Devices.getSubDevices():\n   if dev.deviceClass == None:\n      devclass = dev.getPrimaryParent().getPrimaryParent()\n      print "Re-Linking %s to %s" % (dev.id, devclass)\n      dev.deviceClass._add(devclass)\n      commit()'
+            fixscript = 'for dev in dmd.Devices.getSubDevices():\n   if dev.deviceClass() == None:\n      devclass = dev.getPrimaryParent().getPrimaryParent()\n      print "Re-Linking %s to %s" % (dev.id, devclass)\n      dev.deviceClass._add(devclass)\n      commit()'
             print 'There are broken relationships. Please run the following script in zendmd to fix them and re-run the script: \n %s' % fixscript
             sys.exit()
         if not dc in coll_info[comp.id]['stats']:
