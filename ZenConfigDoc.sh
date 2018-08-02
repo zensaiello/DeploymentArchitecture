@@ -590,6 +590,11 @@ print "Getting default host alias"
 defaultHostAlias = getObjectData(opener, headers, cchost, 'hosts/defaultHostAlias', debug=http_debug)['hostalias']
 print "Getting services information"
 services = getObjectData(opener, headers, cchost, 'services', debug=http_debug)
+#get an index of service ID / Name
+idxSvcId2Name = {}
+for service in services:
+    idxSvcId2Name[service['ID']] = service['Name']
+#
 collectorFromPool = {}
 for service in services:
     servicename = ''
@@ -599,7 +604,10 @@ for service in services:
             pool = 'Internal'
             if pool not in deployments['pools']:
                 deployments['pools'][pool] = {}
-        servicename = service['Name']
+        if service['Tags'] and 'collector' in service['Tags']:
+            servicename = "{}-{}".format(idxSvcId2Name[service['ParentServiceID']], service['Name'])
+        else:
+            servicename = service['Name']
         if 'services' not in deployments['pools'][pool]:
             deployments['pools'][pool]['services'] = {}
         deployments['pools'][pool]['services'][servicename] = {}
