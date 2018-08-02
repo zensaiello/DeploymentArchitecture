@@ -605,7 +605,7 @@ for service in services:
             if pool not in deployments['pools']:
                 deployments['pools'][pool] = {}
         if service['Tags'] and 'collector' in service['Tags']:
-            servicename = "{}-{}".format(idxSvcId2Name[service['ParentServiceID']], service['Name'])
+            servicename = "{}-{}".format(idxSvcId2Name.get(service['ParentServiceID'], 'Unknown'), service['Name'])
         else:
             servicename = service['Name']
         if 'services' not in deployments['pools'][pool]:
